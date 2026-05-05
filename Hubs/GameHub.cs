@@ -1,11 +1,12 @@
 using Microsoft.AspNetCore.SignalR;
+using PlayCards.Models;
 using PlayCards.Services;
 
 namespace PlayCards.Hubs;
 
 public sealed class GameHub(GameRoomService games) : Hub
 {
-    public Task<IReadOnlyList<Models.RoomSummary>> GetRooms() => Task.FromResult(games.GetRooms());
+    public Task<IReadOnlyList<RoomSummary>> GetRooms() => Task.FromResult(games.GetRooms());
 
     public async Task<object> CreateRoom(string roomName, string playerName)
     {
