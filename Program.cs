@@ -19,6 +19,7 @@ if (!app.Environment.IsDevelopment())
 app.UseStaticFiles();
 app.UseRouting();
 
+app.MapGet("/health", () => Results.Ok(new { status = "ok", app = "PlayCards" }));
 app.MapBlazorHub();
 app.MapHub<GameHub>("/gamehub");
 app.MapFallbackToPage("/_Host");
