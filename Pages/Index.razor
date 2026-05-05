@@ -8,7 +8,7 @@
         <h1>PlayCards: Дурак онлайн</h1>
         <p class="subtitle">Комнаты, быстрый старт, защита/атака в реальном времени и таблица результатов.</p>
     </div>
-    <div class="status @(connected ? "ok" : "bad")">@(connected ? "online" : "offline")</div>
+    <div class='status @(connected ? "ok" : "bad")'>@(connected ? "online" : "offline")</div>
 </section>
 
 @if (!string.IsNullOrWhiteSpace(error))
@@ -90,7 +90,7 @@ else
             <div class="players">
                 @foreach (var p in state.Players)
                 {
-                    <div class="player @(p.Id == playerId ? "me" : "")">
+                    <div class='player @(p.Id == playerId ? "me" : "")'>
                         <strong>@p.Name @(p.Id == playerId ? "(ты)" : "")</strong>
                         <span>@p.Cards карт</span>
                         <span>@(p.IsAttacker ? "Атака" : p.IsDefender ? "Защита" : p.Passed ? "Пас" : "Ожидает")</span>
