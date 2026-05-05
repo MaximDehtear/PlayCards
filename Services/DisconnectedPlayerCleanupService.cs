@@ -10,34 +10,46 @@ public sealed class DisconnectedPlayerCleanupService(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
 
         while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
         {
             IReadOnlyList<string> changedRooms;
             try
             {
-                changedRooms = games.ExpireDisconnectedPlayers();
+                changedRooms = games.TickRoomTimers();
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to expire disconnected players.");
+                logger.LogError(ex, "Failed to tick room timers.");
                 continue;
             }
 
             foreach (var roomCode in changedRooms)
             {
-                var scoreboard = games.GetScoreboard(roomCode);
-                await hubContext.Clients.Group(roomCode).SendAsync("ScoreboardUpdated", scoreboard, stoppingToken);
-
-                foreach (var (playerId, connectionId) in games.GetActiveConnections(roomCode))
-                {
-                    var state = games.BuildState(roomCode, playerId);
-                    await hubContext.Clients.Client(connectionId).SendAsync("GameStateUpdated", state, stoppingToken);
-                }
-
-                await hubContext.Clients.All.SendAsync("RoomsUpdated", games.GetRooms(), stoppingToken);
+                await BroadcastRoom(roomCode, stoppingToken);
             }
+
+            await hubContext.Clients.All.SendAsync("RoomsUpdated", games.GetRooms(), stoppingToken);
+        }
+    }
+
+    private async Task BroadcastRoom(string roomCode, CancellationToken stoppingToken)
+    {
+        try
+        {
+            var scoreboard = games.GetScoreboard(roomCode);
+            await hubContext.Clients.Group(roomCode).SendAsync("ScoreboardUpdated", scoreboard, stoppingToken);
+
+            foreach (var (playerId, connectionId) in games.GetActiveConnections(roomCode))
+            {
+                var state = games.BuildState(roomCode, playerId);
+                await hubContext.Clients.Client(connectionId).SendAsync("GameStateUpdated", state, stoppingToken);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // Room may have been removed after rematch timeout or everyone leaving.
         }
     }
 }
