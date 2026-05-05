@@ -73,10 +73,10 @@ public sealed class GameHub(GameRoomService games) : Hub
         var scoreboard = games.GetScoreboard(roomCode);
         await Clients.Group(roomCode).SendAsync("ScoreboardUpdated", scoreboard);
 
-        foreach (var player in scoreboard)
+        foreach (var (playerId, connectionId) in games.GetActiveConnections(roomCode))
         {
-            var state = games.BuildState(roomCode, player.Id);
-            await Clients.Group(roomCode).SendAsync("GameStateUpdated", state);
+            var state = games.BuildState(roomCode, playerId);
+            await Clients.Client(connectionId).SendAsync("GameStateUpdated", state);
         }
     }
 }
