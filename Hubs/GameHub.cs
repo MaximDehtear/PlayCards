@@ -66,6 +66,22 @@ public sealed class GameHub(GameRoomService games) : Hub
         await BroadcastRoom(roomCode);
     }
 
+    public async Task ContinueGame(string roomCode, string playerId)
+    {
+        var stillInRoom = games.ContinueGame(roomCode, playerId);
+        await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
+        if (stillInRoom) await BroadcastRoom(roomCode);
+        else await Clients.Caller.SendAsync("LeftRoom");
+    }
+
+    public async Task LeaveRoom(string roomCode, string playerId)
+    {
+        var stillExists = games.LeaveRoom(roomCode, playerId);
+        await Clients.Caller.SendAsync("LeftRoom");
+        await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
+        if (stillExists) await BroadcastRoom(roomCode);
+    }
+
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         var roomCode = games.FindPlayerRoomByConnection(Context.ConnectionId, out _);
