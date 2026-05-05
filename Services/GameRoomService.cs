@@ -5,6 +5,7 @@ namespace PlayCards.Services;
 public sealed class GameRoomService
 {
     public static readonly TimeSpan DisconnectGracePeriod = TimeSpan.FromMinutes(2);
+    public static readonly TimeSpan RematchWaitPeriod = TimeSpan.FromSeconds(15);
 
     private const int MaxPlayers = 6;
     private readonly object _sync = new();
@@ -31,14 +32,6 @@ public sealed class GameRoomService
                 .Where(p => p.Status != PlayerStatus.Eliminated && !string.IsNullOrWhiteSpace(p.ConnectionId))
                 .Select(p => (p.Id, p.ConnectionId!))
                 .ToList();
-        }
-    }
-
-    public IReadOnlyList<string> GetRoomCodes()
-    {
-        lock (_sync)
-        {
-            return _rooms.Keys.ToList();
         }
     }
 
@@ -82,7 +75,7 @@ public sealed class GameRoomService
                 throw new InvalidOperationException("Игра уже началась. Новые игроки не могут войти, но отключённый игрок может переподключиться в течение 2 минут.");
             }
 
-            if (room.Phase != GamePhase.Lobby) throw new InvalidOperationException("Игра уже завершена.");
+            if (room.Phase == GamePhase.Finished) throw new InvalidOperationException("Игра завершена. Дождись новой партии или создай комнату.");
             if (room.Players.Count(p => p.Status != PlayerStatus.Eliminated) >= MaxPlayers) throw new InvalidOperationException("Комната заполнена.");
 
             var player = new Player { Name = cleanName, ConnectionId = connectionId };
@@ -98,10 +91,8 @@ public sealed class GameRoomService
         {
             var room = GetRoomOrThrow(roomCode);
             var player = GetPlayer(room, playerId);
-
             if (player.Status == PlayerStatus.Eliminated) throw new InvalidOperationException("Игрок уже исключён из игры.");
-            if (!IsWithinGracePeriod(player) && player.Status == PlayerStatus.Disconnected) throw new InvalidOperationException("Время на переподключение истекло.");
-
+            if (player.Status == PlayerStatus.Disconnected && !IsWithinGracePeriod(player)) throw new InvalidOperationException("Время на переподключение истекло.");
             ReconnectPlayer(room, player, connectionId);
             return (room, player);
         }
@@ -114,25 +105,7 @@ public sealed class GameRoomService
             var room = GetRoomOrThrow(roomCode);
             EnsureHost(room, playerId);
             if (room.Players.Count(p => p.Status != PlayerStatus.Eliminated) < 2) throw new InvalidOperationException("Нужно минимум 2 игрока.");
-
-            room.Phase = GamePhase.Playing;
-            room.Deck = CreateDeck().OrderBy(_ => _random.Next()).ToList();
-            room.Table.Clear();
-            room.PassedPlayerIds.Clear();
-
-            foreach (var p in room.Players.Where(p => p.Status != PlayerStatus.Eliminated))
-            {
-                p.Hand.Clear();
-                p.Status = PlayerStatus.Connected;
-                p.DisconnectedAtUtc = null;
-                DrawUpToSix(room, p);
-            }
-
-            room.TrumpCard = room.Deck.LastOrDefault();
-            room.TrumpSuit = room.TrumpCard?.Suit;
-            room.AttackerIndex = FindLowestTrumpOwner(room);
-            room.DefenderIndex = NextActiveIndex(room, room.AttackerIndex);
-            room.Log = $"Игра началась. Козырь: {room.TrumpCard?.Label}. Ходит {room.Players[room.AttackerIndex].Name}.";
+            StartNewRound(room, room.Players.Where(p => p.Status != PlayerStatus.Eliminated).Select(p => p.Id).ToHashSet(StringComparer.OrdinalIgnoreCase));
             return room;
         }
     }
@@ -199,9 +172,10 @@ public sealed class GameRoomService
                 defender.Hand.Add(pair.Attack);
                 if (pair.Defense is not null) defender.Hand.Add(pair.Defense);
             }
+
             room.Table.Clear();
             room.PassedPlayerIds.Clear();
-            RefillHands(room);
+            RefillHandsFair(room);
             room.AttackerIndex = NextActiveIndex(room, room.DefenderIndex);
             room.DefenderIndex = NextActiveIndex(room, room.AttackerIndex);
             room.Log = $"{defender.Name} берёт карты. Следующий ход: {room.Players[room.AttackerIndex].Name}.";
@@ -228,7 +202,7 @@ public sealed class GameRoomService
             {
                 room.Table.Clear();
                 room.PassedPlayerIds.Clear();
-                RefillHands(room);
+                RefillHandsFair(room);
                 room.AttackerIndex = room.DefenderIndex;
                 room.DefenderIndex = NextActiveIndex(room, room.AttackerIndex);
                 room.Log = $"Бито. Следующий ход: {room.Players[room.AttackerIndex].Name}.";
@@ -243,23 +217,88 @@ public sealed class GameRoomService
         }
     }
 
-    public IReadOnlyList<string> ExpireDisconnectedPlayers()
+    public bool ContinueGame(string roomCode, string playerId)
+    {
+        lock (_sync)
+        {
+            var room = GetRoomOrThrow(roomCode);
+            var player = GetPlayer(room, playerId);
+            if (room.Phase != GamePhase.Finished) throw new InvalidOperationException("Партия ещё не завершена.");
+            if (player.Status != PlayerStatus.Connected) throw new InvalidOperationException("Продолжить может только подключённый игрок.");
+
+            var connectedPlayers = room.Players.Where(p => p.Status == PlayerStatus.Connected).ToList();
+            if (connectedPlayers.Count <= 1)
+            {
+                room.Players.Remove(player);
+                if (room.Players.Count == 0) _rooms.Remove(room.Code);
+                return false;
+            }
+
+            room.ContinuePlayerIds.Add(player.Id);
+            room.RematchDeadlineUtc ??= DateTime.UtcNow.Add(RematchWaitPeriod);
+            room.Log = $"{player.Name} готов продолжить. Новая партия начнётся через 15 секунд для тех, кто нажал продолжить.";
+            return true;
+        }
+    }
+
+    public bool LeaveRoom(string roomCode, string playerId)
+    {
+        lock (_sync)
+        {
+            var room = GetRoomOrThrow(roomCode);
+            var player = GetPlayer(room, playerId);
+
+            if (room.Phase == GamePhase.Playing)
+            {
+                EliminateDisconnectedPlayer(room, player, "вышел из комнаты");
+                return _rooms.ContainsKey(room.Code);
+            }
+
+            room.ContinuePlayerIds.Remove(player.Id);
+            room.Players.Remove(player);
+            room.Log = $"{player.Name} вышел из комнаты.";
+
+            if (room.Players.Count == 0)
+            {
+                _rooms.Remove(room.Code);
+                return false;
+            }
+
+            if (room.Phase == GamePhase.Finished && room.Players.Count(p => p.Status == PlayerStatus.Connected) <= 1)
+            {
+                _rooms.Remove(room.Code);
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    public IReadOnlyList<string> TickRoomTimers()
     {
         lock (_sync)
         {
             var changedRooms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var room in _rooms.Values.Where(r => r.Phase == GamePhase.Playing))
-            {
-                var expired = room.Players
-                    .Where(p => p.Status == PlayerStatus.Disconnected && !IsWithinGracePeriod(p))
-                    .ToList();
 
-                foreach (var player in expired)
+            foreach (var room in _rooms.Values.ToList())
+            {
+                if (room.Phase == GamePhase.Playing)
                 {
-                    EliminateDisconnectedPlayer(room, player);
-                    changedRooms.Add(room.Code);
+                    var expired = room.Players.Where(p => p.Status == PlayerStatus.Disconnected && !IsWithinGracePeriod(p)).ToList();
+                    foreach (var player in expired)
+                    {
+                        EliminateDisconnectedPlayer(room, player, "не вернулся за 2 минуты");
+                        changedRooms.Add(room.Code);
+                    }
+                }
+
+                if (room.Phase == GamePhase.Finished && room.RematchDeadlineUtc is not null && DateTime.UtcNow >= room.RematchDeadlineUtc.Value)
+                {
+                    ProcessRematchDeadline(room);
+                    if (_rooms.ContainsKey(room.Code)) changedRooms.Add(room.Code);
                 }
             }
+
             return changedRooms.ToList();
         }
     }
@@ -289,6 +328,7 @@ public sealed class GameRoomService
                     IsAttacker = p.Id == attackerId,
                     IsDefender = p.Id == defenderId,
                     Passed = room.PassedPlayerIds.Contains(p.Id),
+                    WantsContinue = room.ContinuePlayerIds.Contains(p.Id),
                     Wins = p.Wins,
                     Losses = p.Losses,
                     Status = p.Status,
@@ -304,7 +344,11 @@ public sealed class GameRoomService
                 CanStart = room.Phase == GamePhase.Lobby && room.Players.FirstOrDefault()?.Id == player.Id && room.Players.Count(p => p.Status != PlayerStatus.Eliminated) >= 2,
                 IsMyAttack = room.Phase == GamePhase.Playing && CanPlayerAttack(room, player),
                 IsMyDefense = room.Phase == GamePhase.Playing && defenderId == player.Id && player.Status == PlayerStatus.Connected,
-                CanPass = room.Phase == GamePhase.Playing && room.Table.Count > 0 && player.Status == PlayerStatus.Connected
+                CanPass = room.Phase == GamePhase.Playing && room.Table.Count > 0 && player.Status == PlayerStatus.Connected,
+                WantsContinue = room.ContinuePlayerIds.Contains(player.Id),
+                SecondsToRematch = room.Phase == GamePhase.Finished && room.RematchDeadlineUtc is not null
+                    ? Math.Max(0, (int)Math.Ceiling((room.RematchDeadlineUtc.Value - now).TotalSeconds))
+                    : null
             };
         }
     }
@@ -325,6 +369,7 @@ public sealed class GameRoomService
                     Losses = p.Losses,
                     Cards = p.Hand.Count,
                     Status = p.Status,
+                    WantsContinue = room.ContinuePlayerIds.Contains(p.Id),
                     SecondsToAutoKick = p.Status == PlayerStatus.Disconnected && p.DisconnectedAtUtc is not null
                         ? Math.Max(0, (int)Math.Ceiling((DisconnectGracePeriod - (DateTime.UtcNow - p.DisconnectedAtUtc.Value)).TotalSeconds))
                         : null
@@ -370,6 +415,61 @@ public sealed class GameRoomService
         }
     }
 
+    private void StartNewRound(Room room, HashSet<string> playerIds)
+    {
+        room.Players = room.Players.Where(p => playerIds.Contains(p.Id) && p.Status == PlayerStatus.Connected).ToList();
+        if (room.Players.Count < 2)
+        {
+            _rooms.Remove(room.Code);
+            return;
+        }
+
+        room.Phase = GamePhase.Playing;
+        room.Deck = CreateDeck().OrderBy(_ => _random.Next()).ToList();
+        room.Table.Clear();
+        room.PassedPlayerIds.Clear();
+        room.ContinuePlayerIds.Clear();
+        room.RematchDeadlineUtc = null;
+
+        foreach (var p in room.Players)
+        {
+            p.Hand.Clear();
+            p.Status = PlayerStatus.Connected;
+            p.DisconnectedAtUtc = null;
+            DrawUpToSix(room, p);
+        }
+
+        room.TrumpCard = room.Deck.LastOrDefault();
+        room.TrumpSuit = room.TrumpCard?.Suit;
+        room.AttackerIndex = Math.Max(0, FindLowestTrumpOwner(room));
+        room.DefenderIndex = NextActiveIndex(room, room.AttackerIndex);
+        room.Log = $"Новая партия началась. Козырь: {room.TrumpCard?.Label}. Ходит {room.Players[room.AttackerIndex].Name}.";
+    }
+
+    private void ProcessRematchDeadline(Room room)
+    {
+        var continueIds = room.ContinuePlayerIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        room.Players.RemoveAll(p => !continueIds.Contains(p.Id));
+
+        if (room.Players.Count < 2)
+        {
+            _rooms.Remove(room.Code);
+            return;
+        }
+
+        StartNewRound(room, continueIds);
+    }
+
+    private void FinishGame(Room room, string message)
+    {
+        room.Phase = GamePhase.Finished;
+        room.Table.Clear();
+        room.PassedPlayerIds.Clear();
+        room.ContinuePlayerIds.Clear();
+        room.RematchDeadlineUtc = DateTime.UtcNow.Add(RematchWaitPeriod);
+        room.Log = $"{message} Новая партия начнётся через 15 секунд для тех, кто нажмёт продолжить.";
+    }
+
     private void ReconnectPlayer(Room room, Player player, string connectionId)
     {
         player.ConnectionId = connectionId;
@@ -378,7 +478,7 @@ public sealed class GameRoomService
         room.Log = $"{player.Name} вернулся в игру.";
     }
 
-    private void EliminateDisconnectedPlayer(Room room, Player player)
+    private void EliminateDisconnectedPlayer(Room room, Player player, string reason)
     {
         player.Hand.Clear();
         player.ConnectionId = null;
@@ -386,6 +486,7 @@ public sealed class GameRoomService
         player.DisconnectedAtUtc = null;
         player.Losses++;
         room.PassedPlayerIds.Remove(player.Id);
+        room.ContinuePlayerIds.Remove(player.Id);
 
         if (room.Table.Count > 0 && (room.Players[room.AttackerIndex].Id == player.Id || room.Players[room.DefenderIndex].Id == player.Id))
         {
@@ -403,19 +504,17 @@ public sealed class GameRoomService
         if (active.Count == 1)
         {
             active[0].Wins++;
-            room.Phase = GamePhase.Finished;
-            room.Log = $"{player.Name} исключён за отсутствие. {active[0].Name} автоматически побеждает.";
+            FinishGame(room, $"{player.Name} исключён: {reason}. {active[0].Name} автоматически побеждает.");
             return;
         }
 
         if (active.Count == 0)
         {
-            room.Phase = GamePhase.Finished;
-            room.Log = $"{player.Name} исключён за отсутствие. Игра завершена: активных игроков не осталось.";
+            FinishGame(room, $"{player.Name} исключён: {reason}. Активных игроков не осталось.");
             return;
         }
 
-        room.Log = $"{player.Name} исключён за отсутствие. Ему засчитано поражение. Игра продолжается.";
+        room.Log = $"{player.Name} исключён: {reason}. Ему засчитано поражение. Игра продолжается.";
     }
 
     private string CreateRoomCode()
@@ -430,9 +529,7 @@ public sealed class GameRoomService
     }
 
     private static string CleanName(string name) => string.IsNullOrWhiteSpace(name) ? "Игрок" : name.Trim()[..Math.Min(name.Trim().Length, 24)];
-
     private static List<Card> CreateDeck() => Enum.GetValues<Suit>().SelectMany(s => Enum.GetValues<Rank>().Select(r => new Card(s, r))).ToList();
-
     private Room GetRoomOrThrow(string roomCode) => _rooms.TryGetValue(roomCode, out var room) ? room : throw new InvalidOperationException("Комната не найдена.");
     private Room GetPlayingRoom(string roomCode) { var room = GetRoomOrThrow(roomCode); if (room.Phase != GamePhase.Playing) throw new InvalidOperationException("Игра не запущена."); return room; }
     private static Player GetPlayer(Room room, string playerId) => room.Players.FirstOrDefault(p => p.Id == playerId) ?? throw new InvalidOperationException("Игрок не найден.");
@@ -455,10 +552,30 @@ public sealed class GameRoomService
         }
     }
 
-    private void RefillHands(Room room)
+    private void RefillHandsFair(Room room)
     {
-        var order = room.Players.Skip(room.AttackerIndex).Concat(room.Players.Take(room.AttackerIndex));
-        foreach (var player in order.Where(IsActiveInGame)) DrawUpToSix(room, player);
+        var active = room.Players.Where(IsActiveInGame).ToList();
+        if (active.Count == 0) return;
+
+        while (room.Deck.Count > 0)
+        {
+            var candidates = active.Where(p => p.Hand.Count < 6).ToList();
+            if (candidates.Count == 0) return;
+
+            var minCards = candidates.Min(p => p.Hand.Count);
+            var next = OrderedFrom(room, room.AttackerIndex)
+                .Where(p => candidates.Contains(p) && p.Hand.Count == minCards)
+                .First();
+
+            next.Hand.Add(room.Deck[0]);
+            room.Deck.RemoveAt(0);
+        }
+    }
+
+    private IEnumerable<Player> OrderedFrom(Room room, int start)
+    {
+        for (var step = 0; step < room.Players.Count; step++)
+            yield return room.Players[(start + step) % room.Players.Count];
     }
 
     private int FindLowestTrumpOwner(Room room)
@@ -513,8 +630,7 @@ public sealed class GameRoomService
         if (activePlayers.Count <= 1)
         {
             if (activePlayers.Count == 1) activePlayers[0].Wins++;
-            room.Phase = GamePhase.Finished;
-            room.Log = activePlayers.Count == 1 ? $"{activePlayers[0].Name} автоматически побеждает." : "Игра завершена: активных игроков не осталось.";
+            FinishGame(room, activePlayers.Count == 1 ? $"{activePlayers[0].Name} автоматически побеждает." : "Игра завершена: активных игроков не осталось.");
             return;
         }
 
@@ -523,14 +639,13 @@ public sealed class GameRoomService
         var stillHoldingCards = activePlayers.Where(p => p.Hand.Count > 0).ToList();
         if (stillHoldingCards.Count <= 1)
         {
-            room.Phase = GamePhase.Finished;
             foreach (var p in activePlayers)
             {
                 if (p.Hand.Count == 0) p.Wins++;
                 else p.Losses++;
             }
             var loser = stillHoldingCards.FirstOrDefault();
-            room.Log = loser is null ? "Игра закончена без дурака." : $"Игра закончена. Дурак: {loser.Name}.";
+            FinishGame(room, loser is null ? "Игра закончена без дурака." : $"Игра закончена. Дурак: {loser.Name}.");
         }
     }
 }
