@@ -20,6 +20,18 @@ public sealed class GameRoomService
         }
     }
 
+    public IReadOnlyList<(string PlayerId, string ConnectionId)> GetActiveConnections(string roomCode)
+    {
+        lock (_sync)
+        {
+            var room = GetRoomOrThrow(roomCode);
+            return room.Players
+                .Where(p => !string.IsNullOrWhiteSpace(p.ConnectionId))
+                .Select(p => (p.Id, p.ConnectionId!))
+                .ToList();
+        }
+    }
+
     public (Room room, Player player) CreateRoom(string roomName, string playerName, string connectionId)
     {
         lock (_sync)
@@ -91,7 +103,10 @@ public sealed class GameRoomService
 
             var card = TakeCard(player, cardCode);
             if (room.Table.Count > 0 && !room.Table.Any(p => p.Attack.Rank == card.Rank || p.Defense?.Rank == card.Rank))
+            {
+                player.Hand.Add(card);
                 throw new InvalidOperationException("Подкидывать можно только карту такого же ранга, который уже есть на столе.");
+            }
 
             room.Table.Add(new AttackPair { Attack = card });
             room.PassedPlayerIds.Remove(player.Id);
