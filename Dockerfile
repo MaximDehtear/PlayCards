@@ -7,7 +7,6 @@ RUN dotnet publish PlayCards.csproj -c Release -o /app/publish /p:UseAppHost=fal
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
-ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 COPY --from=build /app/publish ./
-ENTRYPOINT ["dotnet", "PlayCards.dll"]
+ENTRYPOINT ["sh", "-c", "dotnet PlayCards.dll --urls http://0.0.0.0:${PORT:-8080}"]
