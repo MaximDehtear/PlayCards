@@ -7,6 +7,7 @@ builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<GameRoomService>();
+builder.Services.AddHostedService<DisconnectedPlayerCleanupService>();
 
 var app = builder.Build();
 
