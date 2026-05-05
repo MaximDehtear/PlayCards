@@ -10,7 +10,8 @@ public enum GamePhase
 public enum PlayerStatus
 {
     Connected,
-    Disconnected
+    Disconnected,
+    Eliminated
 }
 
 public sealed class Player
@@ -19,6 +20,7 @@ public sealed class Player
     public string Name { get; set; } = string.Empty;
     public string? ConnectionId { get; set; }
     public PlayerStatus Status { get; set; } = PlayerStatus.Connected;
+    public DateTime? DisconnectedAtUtc { get; set; }
     public List<Card> Hand { get; set; } = [];
     public int Wins { get; set; }
     public int Losses { get; set; }
@@ -60,6 +62,7 @@ public sealed class PublicPlayerState
     public int Wins { get; set; }
     public int Losses { get; set; }
     public PlayerStatus Status { get; set; }
+    public int? SecondsToAutoKick { get; set; }
 }
 
 public sealed class GameState
