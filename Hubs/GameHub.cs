@@ -26,6 +26,15 @@ public sealed class GameHub(GameRoomService games) : Hub
         return new { roomCode = room.Code, playerId = player.Id };
     }
 
+    public async Task<object> ReconnectRoom(string roomCode, string playerId)
+    {
+        var (room, player) = games.ReconnectRoom(roomCode, playerId, Context.ConnectionId);
+        await Groups.AddToGroupAsync(Context.ConnectionId, room.Code);
+        await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
+        await BroadcastRoom(room.Code);
+        return new { roomCode = room.Code, playerId = player.Id };
+    }
+
     public async Task StartGame(string roomCode, string playerId)
     {
         games.StartGame(roomCode, playerId);
@@ -69,7 +78,7 @@ public sealed class GameHub(GameRoomService games) : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    private async Task BroadcastRoom(string roomCode)
+    public async Task BroadcastRoom(string roomCode)
     {
         var scoreboard = games.GetScoreboard(roomCode);
         await Clients.Group(roomCode).SendAsync("ScoreboardUpdated", scoreboard);
