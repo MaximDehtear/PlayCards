@@ -1,0 +1,289 @@
+@page "/"
+@implements IAsyncDisposable
+@inject NavigationManager Navigation
+
+<section class="hero">
+    <div>
+        <p class="eyebrow">Blazor + SignalR</p>
+        <h1>PlayCards: Дурак онлайн</h1>
+        <p class="subtitle">Комнаты, быстрый старт, защита/атака в реальном времени и таблица результатов.</p>
+    </div>
+    <div class="status @(connected ? "ok" : "bad")">@(connected ? "online" : "offline")</div>
+</section>
+
+@if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert">@error</div>
+}
+
+@if (state is null)
+{
+    <section class="grid two">
+        <div class="panel">
+            <h2>Создать комнату</h2>
+            <label>Твоё имя</label>
+            <input @bind="playerName" maxlength="24" placeholder="Игрок" />
+            <label>Название комнаты</label>
+            <input @bind="roomName" maxlength="32" placeholder="Комната для друзей" />
+            <button @onclick="CreateRoom" disabled="@(!connected)">Создать</button>
+        </div>
+
+        <div class="panel">
+            <h2>Войти по коду</h2>
+            <label>Твоё имя</label>
+            <input @bind="playerName" maxlength="24" placeholder="Игрок" />
+            <label>Код комнаты</label>
+            <input @bind="joinCode" maxlength="8" placeholder="ABCDE" />
+            <button class="secondary" @onclick="JoinRoom" disabled="@(!connected)">Войти</button>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="section-title">
+            <h2>Открытые комнаты</h2>
+            <button class="ghost" @onclick="LoadRooms" disabled="@(!connected)">Обновить</button>
+        </div>
+        @if (rooms.Count == 0)
+        {
+            <p class="muted">Пока нет комнат. Создай первую.</p>
+        }
+        else
+        {
+            <div class="rooms">
+                @foreach (var room in rooms)
+                {
+                    <div class="room-card">
+                        <strong>@room.Name</strong>
+                        <span>Код: @room.Code</span>
+                        <span>@room.Players/@room.MaxPlayers · @room.Phase</span>
+                        <button class="small" @onclick="() => JoinRoomCode(room.Code)" disabled="@(room.Phase != GamePhase.Lobby)">Войти</button>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+}
+else
+{
+    <section class="game-header panel">
+        <div>
+            <p class="eyebrow">Комната @state.RoomCode</p>
+            <h2>@state.RoomName</h2>
+            <p class="muted">@state.Log</p>
+        </div>
+        <div class="trump">
+            <span>Козырь</span>
+            <CardView Card="state.TrumpCard" />
+            <small>Колода: @state.Deck.Count</small>
+        </div>
+    </section>
+
+    <section class="grid table-grid">
+        <div class="panel">
+            <div class="section-title">
+                <h2>Игроки</h2>
+                @if (state.CanStart)
+                {
+                    <button @onclick="StartGame">Старт</button>
+                }
+            </div>
+            <div class="players">
+                @foreach (var p in state.Players)
+                {
+                    <div class="player @(p.Id == playerId ? "me" : "")">
+                        <strong>@p.Name @(p.Id == playerId ? "(ты)" : "")</strong>
+                        <span>@p.Cards карт</span>
+                        <span>@(p.IsAttacker ? "Атака" : p.IsDefender ? "Защита" : p.Passed ? "Пас" : "Ожидает")</span>
+                        <span>@p.Wins W / @p.Losses L</span>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="panel table-panel">
+            <h2>Стол</h2>
+            @if (state.Table.Count == 0)
+            {
+                <p class="muted">На столе пока пусто.</p>
+            }
+            <div class="battlefield">
+                @foreach (var pair in state.Table)
+                {
+                    <div class="pair">
+                        <CardView Card="pair.Attack" />
+                        <span>→</span>
+                        @if (pair.Defense is null)
+                        {
+                            <button class="slot" @onclick="() => SelectAttack(pair.Attack.Code)">выбрать</button>
+                        }
+                        else
+                        {
+                            <CardView Card="pair.Defense" />
+                        }
+                    </div>
+                }
+            </div>
+            <div class="actions">
+                @if (state.IsMyDefense)
+                {
+                    <button class="danger" @onclick="TakeCards">Взять</button>
+                }
+                @if (state.CanPass)
+                {
+                    <button class="secondary" @onclick="Pass">Пас / Бито</button>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(selectedAttackCode))
+            {
+                <p class="hint">Выбрана атака: @selectedAttackCode. Теперь нажми карту из руки для защиты.</p>
+            }
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>Моя рука</h2>
+        <div class="hand">
+            @foreach (var card in state.MyHand)
+            {
+                <button class="card-button" @onclick="() => PlayCard(card.Code)">
+                    <CardView Card="card" />
+                </button>
+            }
+        </div>
+        <p class="hint">
+            Атака: нажми карту. Защита: выбери неотбитую карту на столе, затем карту из руки.
+        </p>
+    </section>
+
+    <section class="panel">
+        <h2>Таблица результатов</h2>
+        <table>
+            <thead><tr><th>Игрок</th><th>Победы</th><th>Поражения</th><th>Карт</th></tr></thead>
+            <tbody>
+            @foreach (var p in scoreboard)
+            {
+                <tr><td>@p.Name</td><td>@p.Wins</td><td>@p.Losses</td><td>@p.Cards</td></tr>
+            }
+            </tbody>
+        </table>
+    </section>
+}
+
+@code {
+    private HubConnection? hub;
+    private bool connected;
+    private string playerName = "Игрок";
+    private string roomName = "";
+    private string joinCode = "";
+    private string? playerId;
+    private string? roomCode;
+    private string? selectedAttackCode;
+    private string? error;
+    private List<RoomSummary> rooms = [];
+    private List<PublicPlayerState> scoreboard = [];
+    private GameState? state;
+
+    protected override async Task OnInitializedAsync()
+    {
+        hub = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("/gamehub"))
+            .WithAutomaticReconnect()
+            .Build();
+
+        hub.On<IReadOnlyList<RoomSummary>>("RoomsUpdated", updated =>
+        {
+            rooms = updated.ToList();
+            InvokeAsync(StateHasChanged);
+        });
+
+        hub.On<GameState>("GameStateUpdated", updated =>
+        {
+            if (playerId is null || updated.CurrentPlayerId == playerId)
+            {
+                state = updated;
+                selectedAttackCode = null;
+                InvokeAsync(StateHasChanged);
+            }
+        });
+
+        hub.On<IReadOnlyList<PublicPlayerState>>("ScoreboardUpdated", updated =>
+        {
+            scoreboard = updated.ToList();
+            InvokeAsync(StateHasChanged);
+        });
+
+        await hub.StartAsync();
+        connected = true;
+        await LoadRooms();
+    }
+
+    private async Task LoadRooms()
+    {
+        if (hub is null) return;
+        rooms = (await hub.InvokeAsync<IReadOnlyList<RoomSummary>>("GetRooms")).ToList();
+    }
+
+    private async Task CreateRoom()
+    {
+        await SafeCall(async () =>
+        {
+            var result = await hub!.InvokeAsync<JoinResult>("CreateRoom", roomName, playerName);
+            roomCode = result.RoomCode;
+            playerId = result.PlayerId;
+        });
+    }
+
+    private Task JoinRoomCode(string code)
+    {
+        joinCode = code;
+        return JoinRoom();
+    }
+
+    private async Task JoinRoom()
+    {
+        await SafeCall(async () =>
+        {
+            var result = await hub!.InvokeAsync<JoinResult>("JoinRoom", joinCode.Trim().ToUpperInvariant(), playerName);
+            roomCode = result.RoomCode;
+            playerId = result.PlayerId;
+        });
+    }
+
+    private Task StartGame() => SafeCall(() => hub!.InvokeAsync("StartGame", roomCode, playerId));
+    private Task TakeCards() => SafeCall(() => hub!.InvokeAsync("Take", roomCode, playerId));
+    private Task Pass() => SafeCall(() => hub!.InvokeAsync("Pass", roomCode, playerId));
+
+    private void SelectAttack(string code) => selectedAttackCode = code;
+
+    private Task PlayCard(string code)
+    {
+        if (state?.IsMyDefense == true && !string.IsNullOrWhiteSpace(selectedAttackCode))
+            return SafeCall(() => hub!.InvokeAsync("Defend", roomCode, playerId, selectedAttackCode, code));
+
+        return SafeCall(() => hub!.InvokeAsync("Attack", roomCode, playerId, code));
+    }
+
+    private async Task SafeCall(Func<Task> action)
+    {
+        try
+        {
+            error = null;
+            await action();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hub is not null) await hub.DisposeAsync();
+    }
+
+    private sealed class JoinResult
+    {
+        public string RoomCode { get; set; } = string.Empty;
+        public string PlayerId { get; set; } = string.Empty;
+    }
+}
