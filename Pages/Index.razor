@@ -1,6 +1,7 @@
 @page "/"
 @implements IAsyncDisposable
 @inject NavigationManager Navigation
+@inject IJSRuntime Js
 
 <section class="hero">
     <div>
@@ -35,6 +36,7 @@
             <label>Код комнаты</label>
             <input @bind="joinCode" maxlength="8" placeholder="ABCDE" />
             <button class="secondary" @onclick="JoinRoom" disabled="@(!connected)">Войти</button>
+            <button class="ghost" @onclick="TryReconnectFromStorage" disabled="@(!connected)">Вернуться в прошлую игру</button>
         </div>
     </section>
 
@@ -93,7 +95,7 @@ else
                     <div class='player @(p.Id == playerId ? "me" : "")'>
                         <strong>@p.Name @(p.Id == playerId ? "(ты)" : "")</strong>
                         <span>@p.Cards карт</span>
-                        <span>@(p.IsAttacker ? "Атака" : p.IsDefender ? "Защита" : p.Passed ? "Пас" : "Ожидает")</span>
+                        <span>@PlayerStatusText(p)</span>
                         <span>@p.Wins W / @p.Losses L</span>
                     </div>
                 }
@@ -158,11 +160,11 @@ else
     <section class="panel">
         <h2>Таблица результатов</h2>
         <table>
-            <thead><tr><th>Игрок</th><th>Победы</th><th>Поражения</th><th>Карт</th></tr></thead>
+            <thead><tr><th>Игрок</th><th>Победы</th><th>Поражения</th><th>Карт</th><th>Статус</th></tr></thead>
             <tbody>
             @foreach (var p in scoreboard)
             {
-                <tr><td>@p.Name</td><td>@p.Wins</td><td>@p.Losses</td><td>@p.Cards</td></tr>
+                <tr><td>@p.Name</td><td>@p.Wins</td><td>@p.Losses</td><td>@p.Cards</td><td>@PlayerStatusText(p)</td></tr>
             }
             </tbody>
         </table>
@@ -170,8 +172,13 @@ else
 }
 
 @code {
+    private const string RoomStorageKey = "playcards.roomCode";
+    private const string PlayerStorageKey = "playcards.playerId";
+    private const string PlayerNameStorageKey = "playcards.playerName";
+
     private HubConnection? hub;
     private bool connected;
+    private bool storageReconnectAttempted;
     private string playerName = "Игрок";
     private string roomName = "";
     private string joinCode = "";
@@ -189,6 +196,30 @@ else
             .WithUrl(Navigation.ToAbsoluteUri("/gamehub"))
             .WithAutomaticReconnect()
             .Build();
+
+        hub.Reconnected += async _ =>
+        {
+            connected = true;
+            if (!string.IsNullOrWhiteSpace(roomCode) && !string.IsNullOrWhiteSpace(playerId))
+            {
+                await SafeCall(async () => await hub!.InvokeAsync<JoinResult>("ReconnectRoom", roomCode, playerId));
+            }
+            await InvokeAsync(StateHasChanged);
+        };
+
+        hub.Reconnecting += _ =>
+        {
+            connected = false;
+            InvokeAsync(StateHasChanged);
+            return Task.CompletedTask;
+        };
+
+        hub.Closed += _ =>
+        {
+            connected = false;
+            InvokeAsync(StateHasChanged);
+            return Task.CompletedTask;
+        };
 
         hub.On<IReadOnlyList<RoomSummary>>("RoomsUpdated", updated =>
         {
@@ -217,6 +248,15 @@ else
         await LoadRooms();
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !storageReconnectAttempted)
+        {
+            storageReconnectAttempted = true;
+            await TryReconnectFromStorage();
+        }
+    }
+
     private async Task LoadRooms()
     {
         if (hub is null) return;
@@ -230,6 +270,7 @@ else
             var result = await hub!.InvokeAsync<JoinResult>("CreateRoom", roomName, playerName);
             roomCode = result.RoomCode;
             playerId = result.PlayerId;
+            await SaveSession();
         });
     }
 
@@ -246,7 +287,36 @@ else
             var result = await hub!.InvokeAsync<JoinResult>("JoinRoom", joinCode.Trim().ToUpperInvariant(), playerName);
             roomCode = result.RoomCode;
             playerId = result.PlayerId;
+            await SaveSession();
         });
+    }
+
+    private async Task TryReconnectFromStorage()
+    {
+        if (hub is null || !connected) return;
+
+        var savedRoomCode = await Js.InvokeAsync<string?>("localStorage.getItem", RoomStorageKey);
+        var savedPlayerId = await Js.InvokeAsync<string?>("localStorage.getItem", PlayerStorageKey);
+        var savedPlayerName = await Js.InvokeAsync<string?>("localStorage.getItem", PlayerNameStorageKey);
+
+        if (string.IsNullOrWhiteSpace(savedRoomCode) || string.IsNullOrWhiteSpace(savedPlayerId)) return;
+
+        await SafeCall(async () =>
+        {
+            var result = await hub!.InvokeAsync<JoinResult>("ReconnectRoom", savedRoomCode, savedPlayerId);
+            roomCode = result.RoomCode;
+            playerId = result.PlayerId;
+            joinCode = result.RoomCode;
+            if (!string.IsNullOrWhiteSpace(savedPlayerName)) playerName = savedPlayerName;
+        });
+    }
+
+    private async Task SaveSession()
+    {
+        if (string.IsNullOrWhiteSpace(roomCode) || string.IsNullOrWhiteSpace(playerId)) return;
+        await Js.InvokeVoidAsync("localStorage.setItem", RoomStorageKey, roomCode);
+        await Js.InvokeVoidAsync("localStorage.setItem", PlayerStorageKey, playerId);
+        await Js.InvokeVoidAsync("localStorage.setItem", PlayerNameStorageKey, playerName);
     }
 
     private Task StartGame() => SafeCall(() => hub!.InvokeAsync("StartGame", roomCode, playerId));
@@ -261,6 +331,16 @@ else
             return SafeCall(() => hub!.InvokeAsync("Defend", roomCode, playerId, selectedAttackCode, code));
 
         return SafeCall(() => hub!.InvokeAsync("Attack", roomCode, playerId, code));
+    }
+
+    private static string PlayerStatusText(PublicPlayerState p)
+    {
+        if (p.Status == PlayerStatus.Eliminated) return "Исключён";
+        if (p.Status == PlayerStatus.Disconnected) return p.SecondsToAutoKick is null ? "Отключён" : $"Отключён, авто-кик через {p.SecondsToAutoKick}s";
+        if (p.IsAttacker) return "Атака";
+        if (p.IsDefender) return "Защита";
+        if (p.Passed) return "Пас";
+        return "Ожидает";
     }
 
     private async Task SafeCall(Func<Task> action)
