@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: playcards-durak
+    env: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /
