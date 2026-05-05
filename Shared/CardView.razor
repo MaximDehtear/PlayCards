@@ -1,0 +1,16 @@
+@using PlayCards.Models
+
+@if (Card is null)
+{
+    <div class="card empty">?</div>
+}
+else
+{
+    <div class="card @(Card.IsRed ? "red" : "black")">
+        <span>@Card.Label</span>
+    </div>
+}
+
+@code {
+    [Parameter] public Card? Card { get; set; }
+}
