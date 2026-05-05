@@ -45,6 +45,8 @@ public sealed class Room
     public int AttackerIndex { get; set; }
     public int DefenderIndex { get; set; }
     public HashSet<string> PassedPlayerIds { get; set; } = [];
+    public HashSet<string> ContinuePlayerIds { get; set; } = [];
+    public DateTime? RematchDeadlineUtc { get; set; }
     public string Log { get; set; } = "Комната создана.";
     public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
 }
@@ -59,6 +61,7 @@ public sealed class PublicPlayerState
     public bool IsAttacker { get; set; }
     public bool IsDefender { get; set; }
     public bool Passed { get; set; }
+    public bool WantsContinue { get; set; }
     public int Wins { get; set; }
     public int Losses { get; set; }
     public PlayerStatus Status { get; set; }
@@ -82,4 +85,6 @@ public sealed class GameState
     public bool IsMyAttack { get; set; }
     public bool IsMyDefense { get; set; }
     public bool CanPass { get; set; }
+    public bool WantsContinue { get; set; }
+    public int? SecondsToRematch { get; set; }
 }
