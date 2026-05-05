@@ -80,6 +80,26 @@ else
         </div>
     </section>
 
+    @if (state.Phase == GamePhase.Finished)
+    {
+        <section class="panel">
+            <div class="section-title">
+                <div>
+                    <h2>Партия окончена</h2>
+                    <p class="muted">
+                        @(state.SecondsToRematch is null
+                            ? "Можно выйти или продолжить."
+                            : $"До новой партии: {state.SecondsToRematch}s. Начнут только те, кто нажал продолжить.")
+                    </p>
+                </div>
+                <div class="actions">
+                    <button class="secondary" @onclick="ContinueGame" disabled="@(state.WantsContinue)">@(state.WantsContinue ? "Готов" : "Продолжить")</button>
+                    <button class="danger" @onclick="LeaveRoom">Выйти</button>
+                </div>
+            </div>
+        </section>
+    }
+
     <section class="grid table-grid">
         <div class="panel">
             <div class="section-title">
@@ -116,7 +136,7 @@ else
                         <span>→</span>
                         @if (pair.Defense is null)
                         {
-                            <button class="slot" @onclick="() => SelectAttack(pair.Attack.Code)">выбрать</button>
+                            <button class="slot" @onclick="() => SelectAttack(pair.Attack.Code)" disabled="@(state.Phase != GamePhase.Playing)">выбрать</button>
                         }
                         else
                         {
@@ -147,7 +167,7 @@ else
         <div class="hand">
             @foreach (var card in state.MyHand)
             {
-                <button class="card-button" @onclick="() => PlayCard(card.Code)">
+                <button class="card-button" @onclick="() => PlayCard(card.Code)" disabled="@(state.Phase != GamePhase.Playing)">
                     <CardView Card="card" />
                 </button>
             }
@@ -243,6 +263,17 @@ else
             InvokeAsync(StateHasChanged);
         });
 
+        hub.On("LeftRoom", async () =>
+        {
+            await ClearSession();
+            state = null;
+            roomCode = null;
+            playerId = null;
+            selectedAttackCode = null;
+            await LoadRooms();
+            await InvokeAsync(StateHasChanged);
+        });
+
         await hub.StartAsync();
         connected = true;
         await LoadRooms();
@@ -319,9 +350,17 @@ else
         await Js.InvokeVoidAsync("localStorage.setItem", PlayerNameStorageKey, playerName);
     }
 
+    private async Task ClearSession()
+    {
+        await Js.InvokeVoidAsync("localStorage.removeItem", RoomStorageKey);
+        await Js.InvokeVoidAsync("localStorage.removeItem", PlayerStorageKey);
+    }
+
     private Task StartGame() => SafeCall(() => hub!.InvokeAsync("StartGame", roomCode, playerId));
     private Task TakeCards() => SafeCall(() => hub!.InvokeAsync("Take", roomCode, playerId));
     private Task Pass() => SafeCall(() => hub!.InvokeAsync("Pass", roomCode, playerId));
+    private Task ContinueGame() => SafeCall(() => hub!.InvokeAsync("ContinueGame", roomCode, playerId));
+    private Task LeaveRoom() => SafeCall(() => hub!.InvokeAsync("LeaveRoom", roomCode, playerId));
 
     private void SelectAttack(string code) => selectedAttackCode = code;
 
@@ -337,6 +376,7 @@ else
     {
         if (p.Status == PlayerStatus.Eliminated) return "Исключён";
         if (p.Status == PlayerStatus.Disconnected) return p.SecondsToAutoKick is null ? "Отключён" : $"Отключён, авто-кик через {p.SecondsToAutoKick}s";
+        if (p.WantsContinue) return "Готов продолжить";
         if (p.IsAttacker) return "Атака";
         if (p.IsDefender) return "Защита";
         if (p.Passed) return "Пас";
