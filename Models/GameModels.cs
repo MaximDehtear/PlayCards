@@ -21,6 +21,8 @@ public sealed class Player
     public string? ConnectionId { get; set; }
     public PlayerStatus Status { get; set; } = PlayerStatus.Connected;
     public DateTime? DisconnectedAtUtc { get; set; }
+    public bool IsBot { get; set; }
+    public List<string> BotMemory { get; set; } = [];
     public List<Card> Hand { get; set; } = [];
     public int Wins { get; set; }
     public int Losses { get; set; }
@@ -44,6 +46,9 @@ public sealed class Room
     public List<AttackPair> Table { get; set; } = [];
     public int AttackerIndex { get; set; }
     public int DefenderIndex { get; set; }
+    public int BotSequence { get; set; }
+    public HashSet<string> SeenCardCodes { get; set; } = [];
+    public List<string> CardMemoryLog { get; set; } = [];
     public HashSet<string> PassedPlayerIds { get; set; } = [];
     public HashSet<string> ContinuePlayerIds { get; set; } = [];
     public DateTime? RematchDeadlineUtc { get; set; }
@@ -58,6 +63,7 @@ public sealed class PublicPlayerState
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public int Cards { get; set; }
+    public bool IsBot { get; set; }
     public bool IsAttacker { get; set; }
     public bool IsDefender { get; set; }
     public bool Passed { get; set; }
