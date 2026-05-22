@@ -4,7 +4,7 @@ using PlayCards.Services;
 
 namespace PlayCards.Hubs;
 
-public sealed class GameHub(GameRoomService games) : Hub
+public sealed class GameHub(GameRoomService games, BotPlayerService bots) : Hub
 {
     public Task<IReadOnlyList<RoomSummary>> GetRooms() => Task.FromResult(games.GetRooms());
 
@@ -33,6 +33,13 @@ public sealed class GameHub(GameRoomService games) : Hub
         await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
         await BroadcastRoom(room.Code);
         return new { roomCode = room.Code, playerId = player.Id };
+    }
+
+    public async Task AddBot(string roomCode)
+    {
+        bots.AddBot(roomCode);
+        await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
+        await BroadcastRoom(roomCode);
     }
 
     public async Task StartGame(string roomCode, string playerId)
