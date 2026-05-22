@@ -5,6 +5,7 @@ namespace PlayCards.Services;
 
 public sealed class DisconnectedPlayerCleanupService(
     GameRoomService games,
+    BotPlayerService bots,
     IHubContext<GameHub> hubContext,
     ILogger<DisconnectedPlayerCleanupService> logger) : BackgroundService
 {
@@ -14,18 +15,19 @@ public sealed class DisconnectedPlayerCleanupService(
 
         while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
         {
-            IReadOnlyList<string> changedRooms;
+            var changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             try
             {
-                changedRooms = games.TickRoomTimers();
+                foreach (var roomCode in games.TickRoomTimers()) changed.Add(roomCode);
+                foreach (var roomCode in bots.RunBotTurns()) changed.Add(roomCode);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to tick room timers.");
+                logger.LogError(ex, "Failed to tick room timers or bot turns.");
                 continue;
             }
 
-            foreach (var roomCode in changedRooms)
+            foreach (var roomCode in changed)
             {
                 await BroadcastRoom(roomCode, stoppingToken);
             }
