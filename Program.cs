@@ -8,6 +8,7 @@ builder.Services.AddServerSideBlazor();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<GameRoomService>();
 builder.Services.AddSingleton<BotPlayerService>();
+builder.Services.AddSingleton<SmartDefenseService>();
 builder.Services.AddHostedService<DisconnectedPlayerCleanupService>();
 
 var app = builder.Build();
