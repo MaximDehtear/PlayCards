@@ -4,7 +4,7 @@ using PlayCards.Services;
 
 namespace PlayCards.Hubs;
 
-public sealed class GameHub(GameRoomService games, BotPlayerService bots) : Hub
+public sealed class GameHub(GameRoomService games, BotPlayerService bots, SmartDefenseService smartDefense) : Hub
 {
     public Task<IReadOnlyList<RoomSummary>> GetRooms() => Task.FromResult(games.GetRooms());
 
@@ -51,7 +51,10 @@ public sealed class GameHub(GameRoomService games, BotPlayerService bots) : Hub
 
     public async Task Attack(string roomCode, string playerId, string cardCode)
     {
-        games.Attack(roomCode, playerId, cardCode);
+        if (!smartDefense.TryDefendFirst(roomCode, playerId, cardCode))
+        {
+            games.Attack(roomCode, playerId, cardCode);
+        }
         await BroadcastRoom(roomCode);
     }
 
