@@ -1,0 +1,54 @@
+@implements IAsyncDisposable
+@inject NavigationManager Navigation
+@inject IJSRuntime Js
+
+<div class="bot-controls">
+    <button class="secondary small" @onclick="AddBot" disabled="@(!connected)">Добавить ИИ</button>
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <span class="hint">@message</span>
+    }
+</div>
+
+@code {
+    private const string RoomStorageKey = "playcards.roomCode";
+    private HubConnection? hub;
+    private bool connected;
+    private string? message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        hub = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("/gamehub"))
+            .WithAutomaticReconnect()
+            .Build();
+        await hub.StartAsync();
+        connected = true;
+    }
+
+    private async Task AddBot()
+    {
+        try
+        {
+            message = null;
+            var roomCode = await Js.InvokeAsync<string?>("localStorage.getItem", RoomStorageKey);
+            if (string.IsNullOrWhiteSpace(roomCode))
+            {
+                message = "Сначала создай комнату или войди в неё.";
+                return;
+            }
+
+            await hub!.InvokeAsync("AddBot", roomCode);
+            message = "ИИ добавлен.";
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hub is not null) await hub.DisposeAsync();
+    }
+}
