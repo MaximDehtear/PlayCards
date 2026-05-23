@@ -324,6 +324,7 @@ public sealed class GameRoomService
                 {
                     Id = p.Id,
                     Name = p.Name,
+                    IsBot = p.IsBot,
                     Cards = p.Hand.Count,
                     IsAttacker = p.Id == attackerId,
                     IsDefender = p.Id == defenderId,
@@ -365,6 +366,7 @@ public sealed class GameRoomService
                 {
                     Id = p.Id,
                     Name = p.Name,
+                    IsBot = p.IsBot,
                     Wins = p.Wins,
                     Losses = p.Losses,
                     Cards = p.Hand.Count,
