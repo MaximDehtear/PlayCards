@@ -3,7 +3,7 @@ using PlayCards.Models;
 
 namespace PlayCards.Services;
 
-public sealed class BotPlayerService(GameRoomService games, ILogger<BotPlayerService> logger)
+public sealed class BotPlayerService(GameRoomService games, AiMoveAdvisorService ai, ILogger<BotPlayerService> logger)
 {
     private readonly FieldInfo _roomsField = typeof(GameRoomService).GetField("_rooms", BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("GameRoomService._rooms field was not found.");
@@ -69,10 +69,15 @@ public sealed class BotPlayerService(GameRoomService games, ILogger<BotPlayerSer
                     var undefended = room.Table.FirstOrDefault(p => p.Defense is null);
                     if (undefended is not null)
                     {
-                        var defense = defender.Hand
+                        var legalDefenses = defender.Hand
                             .Where(c => CanBeat(undefended.Attack, c, room.TrumpSuit!.Value))
                             .OrderBy(c => DefenseCost(c, room.TrumpSuit!.Value))
-                            .FirstOrDefault();
+                            .ToList();
+
+                        var aiDefenseCode = ai.ChooseCard(room, defender, "defense", legalDefenses);
+                        var defense = legalDefenses.FirstOrDefault(c => string.Equals(c.Code, aiDefenseCode, StringComparison.OrdinalIgnoreCase))
+                            ?? legalDefenses.FirstOrDefault();
+
                         if (defense is not null) return new BotAction(room.Code, defender.Id, BotActionKind.Defend, defense.Code, undefended.Attack.Code);
                         RememberTableDestination(room, defender, "забрал");
                         return new BotAction(room.Code, defender.Id, BotActionKind.Take);
@@ -128,15 +133,31 @@ public sealed class BotPlayerService(GameRoomService games, ILogger<BotPlayerSer
     {
         if (room.Table.Count == 0)
         {
-            return bot.Hand.OrderBy(c => c.Suit == room.TrumpSuit ? 1 : 0).ThenBy(c => c.Rank).FirstOrDefault();
+            var legal = bot.Hand
+                .OrderBy(c => c.Suit == room.TrumpSuit ? 1 : 0)
+                .ThenBy(c => c.Rank)
+                .ToList();
+            var aiCode = ai.ChooseCard(room, bot, "attack", legal);
+            return legal.FirstOrDefault(c => string.Equals(c.Code, aiCode, StringComparison.OrdinalIgnoreCase)) ?? legal.FirstOrDefault();
         }
+
         return ChooseThrowIn(room, bot);
     }
 
-    private static Card? ChooseThrowIn(Room room, Player bot)
+    private Card? ChooseThrowIn(Room room, Player bot)
     {
-        var ranks = room.Table.Select(p => p.Attack.Rank).Concat(room.Table.Where(p => p.Defense is not null).Select(p => p.Defense!.Rank)).ToHashSet();
-        return bot.Hand.Where(c => ranks.Contains(c.Rank)).OrderBy(c => c.Suit == room.TrumpSuit ? 1 : 0).ThenBy(c => c.Rank).FirstOrDefault();
+        var ranks = room.Table.Select(p => p.Attack.Rank)
+            .Concat(room.Table.Where(p => p.Defense is not null).Select(p => p.Defense!.Rank))
+            .ToHashSet();
+
+        var legal = bot.Hand
+            .Where(c => ranks.Contains(c.Rank))
+            .OrderBy(c => c.Suit == room.TrumpSuit ? 1 : 0)
+            .ThenBy(c => c.Rank)
+            .ToList();
+
+        var aiCode = ai.ChooseCard(room, bot, "throw-in", legal);
+        return legal.FirstOrDefault(c => string.Equals(c.Code, aiCode, StringComparison.OrdinalIgnoreCase)) ?? legal.FirstOrDefault();
     }
 
     private static bool CanBeat(Card attack, Card defense, Suit trump) =>
