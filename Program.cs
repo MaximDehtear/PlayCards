@@ -7,6 +7,7 @@ builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<GameRoomService>();
+builder.Services.AddSingleton<TurnRulesService>();
 builder.Services.AddSingleton<AiMoveAdvisorService>();
 builder.Services.AddSingleton<BotPlayerService>();
 builder.Services.AddSingleton<SmartDefenseService>();
