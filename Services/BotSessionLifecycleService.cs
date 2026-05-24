@@ -10,11 +10,31 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
     private readonly FieldInfo _syncField = typeof(GameRoomService).GetField("_sync", BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("GameRoomService._sync field was not found.");
 
+    public void CleanupStaleFinishedSessions()
+    {
+        lock (Sync)
+        {
+            foreach (var room in Rooms.Values.ToList())
+            {
+                if (IsStaleFinishedSession(room))
+                {
+                    DestroyRoom(room);
+                }
+            }
+        }
+    }
+
     public bool ContinueHumanAndBots(string roomCode, string playerId)
     {
         lock (Sync)
         {
+            CleanupStaleFinishedSessionsUnsafe();
             var room = GetRoom(roomCode);
+            if (IsStaleFinishedSession(room))
+            {
+                DestroyRoom(room);
+                return false;
+            }
             if (room.Phase != GamePhase.Finished) throw new InvalidOperationException("Партия ещё не завершена.");
 
             var player = room.Players.FirstOrDefault(p => p.Id == playerId)
@@ -32,8 +52,7 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
             var continuing = room.Players.Count(p => room.ContinuePlayerIds.Contains(p.Id) && p.Status == PlayerStatus.Connected);
             if (continuing < 2)
             {
-                room.Players.Remove(player);
-                if (room.Players.Count == 0 || room.Players.All(p => p.IsBot)) Rooms.Remove(room.Code);
+                DestroyRoom(room);
                 return false;
             }
 
@@ -47,6 +66,7 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
     {
         lock (Sync)
         {
+            CleanupStaleFinishedSessionsUnsafe();
             var room = GetRoom(roomCode);
             if (room.Phase != GamePhase.Finished) return;
 
@@ -79,22 +99,58 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
             room.SeenCardCodes.Clear();
             room.CardMemoryLog.Clear();
 
+            if (IsStaleFinishedSession(room))
+            {
+                DestroyRoom(room);
+                return false;
+            }
+
             var humans = room.Players.Where(p => !p.IsBot && p.Status != PlayerStatus.Eliminated).ToList();
             if (humans.Count == 0)
             {
-                Rooms.Remove(room.Code);
+                DestroyRoom(room);
                 return false;
             }
 
             if (room.Phase == GamePhase.Finished && humans.Count == 1)
             {
-                Rooms.Remove(room.Code);
+                DestroyRoom(room);
                 return false;
             }
 
             room.Log = "ИИ удалены из комнаты. Их память и история очищены.";
             return true;
         }
+    }
+
+    private void CleanupStaleFinishedSessionsUnsafe()
+    {
+        foreach (var room in Rooms.Values.ToList())
+        {
+            if (IsStaleFinishedSession(room)) DestroyRoom(room);
+        }
+    }
+
+    private static bool IsStaleFinishedSession(Room room)
+    {
+        if (room.Phase != GamePhase.Finished) return false;
+        var livingHumans = room.Players.Count(p => !p.IsBot && p.Status != PlayerStatus.Eliminated);
+        return livingHumans == 0;
+    }
+
+    private void DestroyRoom(Room room)
+    {
+        foreach (var player in room.Players)
+        {
+            player.Hand.Clear();
+            player.BotMemory.Clear();
+        }
+        room.Table.Clear();
+        room.PassedPlayerIds.Clear();
+        room.ContinuePlayerIds.Clear();
+        room.SeenCardCodes.Clear();
+        room.CardMemoryLog.Clear();
+        Rooms.Remove(room.Code);
     }
 
     private static void ResetBotRoundMemory(Room room)
