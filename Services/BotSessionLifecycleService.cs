@@ -5,12 +5,11 @@ namespace PlayCards.Services;
 
 public sealed class BotSessionLifecycleService(GameRoomService games)
 {
+    private readonly Random _random = new();
     private readonly FieldInfo _roomsField = typeof(GameRoomService).GetField("_rooms", BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("GameRoomService._rooms field was not found.");
     private readonly FieldInfo _syncField = typeof(GameRoomService).GetField("_sync", BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("GameRoomService._sync field was not found.");
-    private readonly MethodInfo _startNewRoundMethod = typeof(GameRoomService).GetMethod("StartNewRound", BindingFlags.Instance | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException("GameRoomService.StartNewRound method was not found.");
 
     public void CleanupStaleFinishedSessions()
     {
@@ -63,7 +62,7 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
                 return false;
             }
 
-            StartNewRound(room, continuingIds);
+            StartBotRematchRound(room, continuingIds);
             return Rooms.ContainsKey(roomCode);
         }
     }
@@ -159,9 +158,41 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
         Rooms.Remove(room.Code);
     }
 
-    private void StartNewRound(Room room, HashSet<string> playerIds)
+    private void StartBotRematchRound(Room room, HashSet<string> playerIds)
     {
-        _startNewRoundMethod.Invoke(games, new object[] { room, playerIds });
+        room.Players = room.Players
+            .Where(p => playerIds.Contains(p.Id) && p.Status == PlayerStatus.Connected)
+            .ToList();
+
+        if (room.Players.Count < 2)
+        {
+            DestroyRoom(room);
+            return;
+        }
+
+        room.Phase = GamePhase.Playing;
+        room.Deck = CreateDeck().OrderBy(_ => _random.Next()).ToList();
+        room.Table.Clear();
+        room.PassedPlayerIds.Clear();
+        room.ContinuePlayerIds.Clear();
+        room.SeenCardCodes.Clear();
+        room.CardMemoryLog.Clear();
+        room.RematchDeadlineUtc = null;
+
+        foreach (var player in room.Players)
+        {
+            player.Hand.Clear();
+            player.DisconnectedAtUtc = null;
+            player.Status = PlayerStatus.Connected;
+            if (player.IsBot) player.BotMemory.Clear();
+            DrawUpToSix(room, player);
+        }
+
+        room.TrumpCard = room.Deck.LastOrDefault();
+        room.TrumpSuit = room.TrumpCard?.Suit;
+        room.AttackerIndex = Math.Max(0, FindLowestTrumpOwner(room));
+        room.DefenderIndex = NextActiveIndex(room, room.AttackerIndex);
+        room.Log = $"Новая партия началась. Козырь: {room.TrumpCard?.Label}. Ходит {room.Players[room.AttackerIndex].Name}.";
     }
 
     private static void ResetBotRoundMemory(Room room)
@@ -173,6 +204,38 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
         {
             bot.BotMemory.Clear();
         }
+    }
+
+    private static List<Card> CreateDeck() => Enum.GetValues<Suit>().SelectMany(s => Enum.GetValues<Rank>().Select(r => new Card(s, r))).ToList();
+
+    private static void DrawUpToSix(Room room, Player player)
+    {
+        while (player.Hand.Count < 6 && room.Deck.Count > 0)
+        {
+            player.Hand.Add(room.Deck[0]);
+            room.Deck.RemoveAt(0);
+        }
+    }
+
+    private static int FindLowestTrumpOwner(Room room)
+    {
+        var trump = room.TrumpSuit!.Value;
+        var candidate = room.Players
+            .Select((p, i) => new { Player = p, Index = i, Card = p.Hand.Where(c => c.Suit == trump).OrderBy(c => c.Rank).FirstOrDefault() })
+            .Where(x => x.Player.Status == PlayerStatus.Connected && x.Card is not null)
+            .OrderBy(x => x.Card!.Rank)
+            .FirstOrDefault();
+        return candidate?.Index ?? Math.Max(0, room.Players.FindIndex(p => p.Status == PlayerStatus.Connected));
+    }
+
+    private static int NextActiveIndex(Room room, int from)
+    {
+        for (var step = 1; step <= room.Players.Count; step++)
+        {
+            var idx = (from + step) % room.Players.Count;
+            if (room.Players[idx].Status == PlayerStatus.Connected) return idx;
+        }
+        return from;
     }
 
     private Dictionary<string, Room> Rooms => (Dictionary<string, Room>)_roomsField.GetValue(games)!;
