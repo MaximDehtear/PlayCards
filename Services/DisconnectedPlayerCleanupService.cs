@@ -7,6 +7,7 @@ public sealed class DisconnectedPlayerCleanupService(
     GameRoomService games,
     BotPlayerService bots,
     BotRoomReconnectProtectionService reconnectProtection,
+    BotSessionLifecycleService botLifecycle,
     IHubContext<GameHub> hubContext,
     ILogger<DisconnectedPlayerCleanupService> logger) : BackgroundService
 {
@@ -20,6 +21,7 @@ public sealed class DisconnectedPlayerCleanupService(
             try
             {
                 foreach (var roomCode in reconnectProtection.ProtectDisconnectedHumansInBotRooms()) changed.Add(roomCode);
+                foreach (var roomCode in botLifecycle.ProtectFinishedBotRoomsFromTimeout()) changed.Add(roomCode);
                 foreach (var roomCode in games.TickRoomTimers()) changed.Add(roomCode);
                 foreach (var roomCode in bots.RunBotTurns()) changed.Add(roomCode);
             }
@@ -53,7 +55,7 @@ public sealed class DisconnectedPlayerCleanupService(
         }
         catch (InvalidOperationException)
         {
-            // Room may have been removed after rematch timeout or everyone leaving.
+            // Room may have been removed after everyone leaving.
         }
     }
 }
