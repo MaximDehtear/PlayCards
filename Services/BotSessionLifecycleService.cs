@@ -25,6 +25,27 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
         }
     }
 
+    public IReadOnlyList<string> ProtectFinishedBotRoomsFromTimeout()
+    {
+        lock (Sync)
+        {
+            var changed = new List<string>();
+            foreach (var room in Rooms.Values)
+            {
+                if (room.Phase != GamePhase.Finished) continue;
+                if (!room.Players.Any(p => p.IsBot)) continue;
+                if (!room.Players.Any(p => !p.IsBot && p.Status != PlayerStatus.Eliminated)) continue;
+                if (room.RematchDeadlineUtc is null) continue;
+
+                room.RematchDeadlineUtc = null;
+                room.Log = "Партия закончена. Нажми «Продолжить» для новой партии с ИИ или «Выйти» для удаления ИИ.";
+                changed.Add(room.Code);
+            }
+
+            return changed;
+        }
+    }
+
     public bool ContinueHumanAndBots(string roomCode, string playerId)
     {
         lock (Sync)
@@ -36,12 +57,12 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
                 DestroyRoom(room);
                 return false;
             }
-            if (room.Phase != GamePhase.Finished) throw new InvalidOperationException("Партия ещё не завершена.");
+            if (room.Phase != GamePhase.Finished) throw new InvalidOperationException("Партия ещё не завершена. Нельзя продолжить новую партию, пока текущая не закончилась.");
 
             var player = room.Players.FirstOrDefault(p => p.Id == playerId)
-                ?? throw new InvalidOperationException("Игрок не найден.");
+                ?? throw new InvalidOperationException("Игрок не найден в комнате. Вероятно, сессия устарела — выйди на главный экран и создай комнату заново.");
             if (player.IsBot) throw new InvalidOperationException("Продолжить должен живой игрок, не бот.");
-            if (player.Status != PlayerStatus.Connected) throw new InvalidOperationException("Продолжить может только подключённый игрок.");
+            if (player.Status != PlayerStatus.Connected) throw new InvalidOperationException("Продолжить может только подключённый игрок. Обнови страницу и попробуй восстановиться.");
 
             ResetBotRoundMemory(room);
             room.ContinuePlayerIds.Clear();
@@ -240,5 +261,5 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
 
     private Dictionary<string, Room> Rooms => (Dictionary<string, Room>)_roomsField.GetValue(games)!;
     private object Sync => _syncField.GetValue(games)!;
-    private Room GetRoom(string code) => Rooms.TryGetValue(code, out var room) ? room : throw new InvalidOperationException("Комната не найдена.");
+    private Room GetRoom(string code) => Rooms.TryGetValue(code, out var room) ? room : throw new InvalidOperationException("Комната не найдена. Возможно, сервер уже удалил старую сессию. Вернись на главный экран и создай комнату заново.");
 }
