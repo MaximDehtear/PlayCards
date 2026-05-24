@@ -16,8 +16,7 @@ public sealed class BotPlayerService(GameRoomService games, TurnRulesService rul
         {
             var room = GetRoom(roomCode);
             if (room.Phase != GamePhase.Lobby) throw new InvalidOperationException("Ботов можно добавлять только до старта игры.");
-            if (room.Players.Count(p => p.IsBot && p.Status != PlayerStatus.Eliminated) >= 3) throw new InvalidOperationException("Можно добавить максимум 3 ИИ-игрока.");
-            if (room.Players.Count(p => p.Status != PlayerStatus.Eliminated) >= 6) throw new InvalidOperationException("Комната заполнена.");
+            if (room.Players.Count(p => p.Status != PlayerStatus.Eliminated) >= 6) throw new InvalidOperationException("Комната заполнена. Максимум 6 игроков вместе с ИИ.");
 
             room.BotSequence++;
             var bot = new Player
