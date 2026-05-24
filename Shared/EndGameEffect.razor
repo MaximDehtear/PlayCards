@@ -15,11 +15,11 @@
         }
         else if (Result == EndGameResult.Lose)
         {
-            <div class="endgame-banner lose-banner">ХА-ХА</div>
+            <div class="endgame-banner lose-banner">ХА-ХА 😂</div>
             <div class="laugh-field">
                 @foreach (var laugh in _laughs)
                 {
-                    <span class="laugh" style="left:@(laugh.Left)%; top:@(laugh.Top)%; animation-delay:@(laugh.DelayMs)ms">ха</span>
+                    <span class="laugh laugh-@laugh.Size" style="left:@(laugh.Left)%; top:@(laugh.Top)%; animation-delay:@(laugh.DelayMs)ms; transform:rotate(@(laugh.Rotation)deg)">@laugh.Text</span>
                 }
             </div>
         }
@@ -32,7 +32,7 @@
 
     private readonly Random _random = new();
     private readonly List<EffectItem> _bursts = [];
-    private readonly List<EffectItem> _laughs = [];
+    private readonly List<LaughItem> _laughs = [];
     private bool _visible;
     private string? _lastTriggerKey;
     private CancellationTokenSource? _cts;
@@ -50,13 +50,22 @@
 
         if (Result == EndGameResult.Win)
         {
-            for (var i = 0; i < 32; i++)
-                _bursts.Add(new EffectItem(_random.Next(6, 94), _random.Next(8, 78), i * 70));
+            for (var i = 0; i < 38; i++)
+                _bursts.Add(new EffectItem(_random.Next(6, 94), _random.Next(8, 78), i * 60));
         }
         else if (Result == EndGameResult.Lose)
         {
-            for (var i = 0; i < 52; i++)
-                _laughs.Add(new EffectItem(_random.Next(4, 92), _random.Next(8, 86), i * 55));
+            var words = new[] { "ха 😂", "ха-ха 🤣", "😂", "🤣", "ха", "ХА" };
+            for (var i = 0; i < 96; i++)
+            {
+                _laughs.Add(new LaughItem(
+                    Left: _random.Next(2, 94),
+                    Top: _random.Next(6, 88),
+                    DelayMs: i * 32,
+                    Rotation: _random.Next(-28, 29),
+                    Size: _random.Next(1, 4),
+                    Text: words[_random.Next(words.Length)]));
+            }
         }
 
         _cts?.Cancel();
@@ -84,4 +93,5 @@
     }
 
     private readonly record struct EffectItem(int Left, int Top, int DelayMs);
+    private readonly record struct LaughItem(int Left, int Top, int DelayMs, int Rotation, int Size, string Text);
 }
