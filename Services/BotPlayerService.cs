@@ -3,7 +3,7 @@ using PlayCards.Models;
 
 namespace PlayCards.Services;
 
-public sealed class BotPlayerService(GameRoomService games, AiMoveAdvisorService ai, ILogger<BotPlayerService> logger)
+public sealed class BotPlayerService(GameRoomService games, TurnRulesService rules, AiMoveAdvisorService ai, ILogger<BotPlayerService> logger)
 {
     private readonly FieldInfo _roomsField = typeof(GameRoomService).GetField("_rooms", BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("GameRoomService._rooms field was not found.");
@@ -60,6 +60,8 @@ public sealed class BotPlayerService(GameRoomService games, AiMoveAdvisorService
         {
             foreach (var room in Rooms.Values.Where(r => r.Phase == GamePhase.Playing))
             {
+                rules.NormalizeRoom(room.Code);
+                if (room.Phase != GamePhase.Playing) continue;
                 if (room.Players.Count == 0 || room.AttackerIndex < 0 || room.DefenderIndex < 0) continue;
                 if (room.AttackerIndex >= room.Players.Count || room.DefenderIndex >= room.Players.Count) continue;
 
@@ -134,6 +136,7 @@ public sealed class BotPlayerService(GameRoomService games, AiMoveAdvisorService
         switch (action.Kind)
         {
             case BotActionKind.Attack:
+                rules.EnsureCanAttack(action.RoomCode, action.PlayerId);
                 games.Attack(action.RoomCode, action.PlayerId, action.CardCode!);
                 RememberPlayedCard(action.RoomCode, action.PlayerId, action.CardCode!, "сыграл на стол");
                 break;
@@ -143,15 +146,18 @@ public sealed class BotPlayerService(GameRoomService games, AiMoveAdvisorService
                 break;
             case BotActionKind.Take:
                 games.Take(action.RoomCode, action.PlayerId);
+                rules.NormalizeRoom(action.RoomCode);
                 break;
             case BotActionKind.Pass:
                 games.Pass(action.RoomCode, action.PlayerId);
+                rules.NormalizeRoom(action.RoomCode);
                 break;
         }
     }
 
     private Card? ChooseAttack(Room room, Player bot)
     {
+        if (bot.Hand.Count == 0) return null;
         if (room.Table.Count == 0)
         {
             var legal = bot.Hand
@@ -167,6 +173,7 @@ public sealed class BotPlayerService(GameRoomService games, AiMoveAdvisorService
 
     private Card? ChooseThrowIn(Room room, Player bot)
     {
+        if (bot.Hand.Count == 0 || !TurnRulesService.CanAddAttackCard(room)) return null;
         var ranks = room.Table.Select(p => p.Attack.Rank)
             .Concat(room.Table.Where(p => p.Defense is not null).Select(p => p.Defense!.Rank))
             .ToHashSet();
