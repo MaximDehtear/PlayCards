@@ -9,7 +9,8 @@ public sealed class GameHub(
     BotPlayerService bots,
     SmartDefenseService smartDefense,
     ConnectionRecoveryService recovery,
-    TurnRulesService rules) : Hub
+    TurnRulesService rules,
+    BotSessionLifecycleService botLifecycle) : Hub
 {
     public Task<IReadOnlyList<RoomSummary>> GetRooms() => Task.FromResult(games.GetRooms());
 
@@ -86,6 +87,7 @@ public sealed class GameHub(
     public async Task ContinueGame(string roomCode, string playerId)
     {
         var stillInRoom = games.ContinueGame(roomCode, playerId);
+        if (stillInRoom) botLifecycle.ContinueBotsWithHuman(roomCode);
         await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
         if (stillInRoom) await BroadcastAfterBotTurns(roomCode);
         else await Clients.Caller.SendAsync("LeftRoom");
@@ -94,6 +96,7 @@ public sealed class GameHub(
     public async Task LeaveRoom(string roomCode, string playerId)
     {
         var stillExists = games.LeaveRoom(roomCode, playerId);
+        if (stillExists) stillExists = botLifecycle.RemoveBotsAfterHumanLeaves(roomCode);
         await Clients.Caller.SendAsync("LeftRoom");
         await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
         if (stillExists) await BroadcastAfterBotTurns(roomCode);
