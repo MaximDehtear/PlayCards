@@ -67,6 +67,8 @@
 }
 else
 {
+    <EndGameEffect Result="GetEndGameResult()" TriggerKey="GetEndGameTriggerKey()" />
+
     <section class="game-header panel">
         <div>
             <p class="eyebrow">Комната @state.RoomCode</p>
@@ -378,6 +380,21 @@ else
             return SafeCall(() => hub!.InvokeAsync("Defend", roomCode, playerId, selectedAttackCode, code));
 
         return SafeCall(() => hub!.InvokeAsync("Attack", roomCode, playerId, code));
+    }
+
+    private EndGameResult GetEndGameResult()
+    {
+        if (state?.Phase != GamePhase.Finished || string.IsNullOrWhiteSpace(playerId)) return EndGameResult.None;
+        var me = state.Players.FirstOrDefault(p => p.Id == playerId);
+        if (me is null) return EndGameResult.None;
+        return me.Cards == 0 ? EndGameResult.Win : EndGameResult.Lose;
+    }
+
+    private string? GetEndGameTriggerKey()
+    {
+        if (state?.Phase != GamePhase.Finished || string.IsNullOrWhiteSpace(playerId)) return null;
+        var scoreStamp = string.Join("|", state.Players.OrderBy(p => p.Id).Select(p => $"{p.Id}:{p.Wins}:{p.Losses}:{p.Cards}"));
+        return $"{state.RoomCode}:{playerId}:{scoreStamp}";
     }
 
     private static string PlayerStatusText(PublicPlayerState p)
