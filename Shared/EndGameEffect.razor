@@ -26,17 +26,22 @@
 
 @code {
     [Parameter] public EndGameResult Result { get; set; }
+    [Parameter] public string? TriggerKey { get; set; }
 
     private readonly Random _random = new();
     private readonly List<EffectItem> _bursts = [];
     private readonly List<EffectItem> _laughs = [];
     private bool _visible;
+    private string? _lastTriggerKey;
     private CancellationTokenSource? _cts;
 
     protected override void OnParametersSet()
     {
-        if (Result == EndGameResult.None || _visible) return;
+        if (Result == EndGameResult.None) return;
+        if (string.IsNullOrWhiteSpace(TriggerKey)) return;
+        if (string.Equals(_lastTriggerKey, TriggerKey, StringComparison.Ordinal)) return;
 
+        _lastTriggerKey = TriggerKey;
         _visible = true;
         _bursts.Clear();
         _laughs.Clear();
