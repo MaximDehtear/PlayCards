@@ -428,6 +428,8 @@ public sealed class GameRoomService
 
         room.Phase = GamePhase.Playing;
         room.Deck = CreateDeck().OrderBy(_ => _random.Next()).ToList();
+        room.TrumpCard = room.Deck.LastOrDefault();
+        room.TrumpSuit = room.TrumpCard?.Suit;
         room.Table.Clear();
         room.PassedPlayerIds.Clear();
         room.ContinuePlayerIds.Clear();
@@ -441,8 +443,6 @@ public sealed class GameRoomService
             DrawUpToSix(room, p);
         }
 
-        room.TrumpCard = room.Deck.LastOrDefault();
-        room.TrumpSuit = room.TrumpCard?.Suit;
         room.AttackerIndex = Math.Max(0, FindLowestTrumpOwner(room));
         room.DefenderIndex = NextActiveIndex(room, room.AttackerIndex);
         room.Log = $"Новая партия началась. Козырь: {room.TrumpCard?.Label}. Ходит {room.Players[room.AttackerIndex].Name}.";
