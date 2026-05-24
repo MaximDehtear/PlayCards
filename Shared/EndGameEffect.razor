@@ -1,0 +1,89 @@
+@implements IDisposable
+
+@if (_visible)
+{
+    <div class="endgame-effect" aria-hidden="true">
+        @if (Result == EndGameResult.Win)
+        {
+            <div class="fireworks">
+                @foreach (var burst in _bursts)
+                {
+                    <span class="firework" style="left:@burst.Left%; top:@burst.Top%; animation-delay:@burst.DelayMsms"></span>
+                }
+            </div>
+        }
+        else if (Result == EndGameResult.Lose)
+        {
+            <div class="laugh-field">
+                @foreach (var laugh in _laughs)
+                {
+                    <span class="laugh" style="left:@laugh.Left%; top:@laugh.Top%; animation-delay:@laugh.DelayMsms">ха</span>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public EndGameResult Result { get; set; }
+
+    private readonly Random _random = new();
+    private readonly List<EffectItem> _bursts = [];
+    private readonly List<EffectItem> _laughs = [];
+    private bool _visible;
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource? _cts;
+
+    protected override void OnParametersSet()
+    {
+        if (Result == EndGameResult.None || _visible) return;
+
+        _visible = true;
+        _bursts.Clear();
+        _laughs.Clear();
+
+        if (Result == EndGameResult.Win)
+        {
+            for (var i = 0; i < 18; i++)
+                _bursts.Add(new EffectItem(_random.Next(10, 90), _random.Next(8, 55), i * 120));
+        }
+        else if (Result == EndGameResult.Lose)
+        {
+            for (var i = 0; i < 36; i++)
+                _laughs.Add(new EffectItem(_random.Next(5, 90), _random.Next(8, 82), i * 80));
+        }
+
+        _cts?.Cancel();
+        _cts = new CancellationTokenSource();
+        _ = HideLater(_cts.Token);
+    }
+
+    private async Task HideLater(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(3000, cancellationToken);
+            _visible = false;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+
+    private readonly record struct EffectItem(int Left, int Top, int DelayMs);
+}
+
+public enum EndGameResult
+{
+    None,
+    Win,
+    Lose
+}
