@@ -22,6 +22,7 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
             if (player.IsBot) throw new InvalidOperationException("Продолжить должен живой игрок, не бот.");
             if (player.Status != PlayerStatus.Connected) throw new InvalidOperationException("Продолжить может только подключённый игрок.");
 
+            ResetBotRoundMemory(room);
             room.ContinuePlayerIds.Add(player.Id);
             foreach (var bot in room.Players.Where(p => p.IsBot && p.Status == PlayerStatus.Connected))
             {
@@ -37,7 +38,7 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
             }
 
             room.RematchDeadlineUtc ??= DateTime.UtcNow.Add(GameRoomService.RematchWaitPeriod);
-            room.Log = "Игрок продолжает. ИИ автоматически готовы к новой партии.";
+            room.Log = "Игрок продолжает. ИИ автоматически готовы к новой партии. Память ИИ очищена для новой партии.";
             return true;
         }
     }
@@ -49,13 +50,14 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
             var room = GetRoom(roomCode);
             if (room.Phase != GamePhase.Finished) return;
 
+            ResetBotRoundMemory(room);
             foreach (var bot in room.Players.Where(p => p.IsBot && p.Status == PlayerStatus.Connected))
             {
                 room.ContinuePlayerIds.Add(bot.Id);
             }
 
             if (room.Players.Any(p => p.IsBot))
-                room.Log = "ИИ автоматически готовы продолжить новую партию.";
+                room.Log = "ИИ автоматически готовы продолжить новую партию. Память ИИ очищена для новой партии.";
         }
     }
 
@@ -92,6 +94,17 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
 
             room.Log = "ИИ удалены из комнаты. Их память и история очищены.";
             return true;
+        }
+    }
+
+    private static void ResetBotRoundMemory(Room room)
+    {
+        room.SeenCardCodes.Clear();
+        room.CardMemoryLog.Clear();
+        room.PassedPlayerIds.Clear();
+        foreach (var bot in room.Players.Where(p => p.IsBot))
+        {
+            bot.BotMemory.Clear();
         }
     }
 
