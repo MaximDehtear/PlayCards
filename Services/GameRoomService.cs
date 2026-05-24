@@ -152,6 +152,7 @@ public sealed class GameRoomService
             }
 
             pair.Defense = defense;
+            ReopenPassedAttackersWithLegalThrowIn(room);
             room.Log = $"{defender.Name} отбивает {pair.Attack.Label} картой {defense.Label}.";
             CheckInstantFinish(room);
             return room;
@@ -196,9 +197,10 @@ public sealed class GameRoomService
             var defender = room.Players[room.DefenderIndex];
             var allDefended = room.Table.All(p => p.Defense is not null);
             var attackers = room.Players.Where(p => IsActiveInGame(p) && p.Id != defender.Id && p.Hand.Count > 0).ToList();
-            var allPassed = attackers.All(p => room.PassedPlayerIds.Contains(p.Id));
+            var hasLegalThrowIn = attackers.Any(p => !room.PassedPlayerIds.Contains(p.Id) && HasLegalThrowIn(room, p));
+            var allPassedOrCannotThrow = attackers.All(p => room.PassedPlayerIds.Contains(p.Id) || !HasLegalThrowIn(room, p));
 
-            if (allDefended && allPassed)
+            if (allDefended && !hasLegalThrowIn && allPassedOrCannotThrow)
             {
                 room.Table.Clear();
                 room.PassedPlayerIds.Clear();
@@ -544,6 +546,25 @@ public sealed class GameRoomService
     private static void EnsureHost(Room room, string playerId) { if (room.Players.FirstOrDefault()?.Id != playerId) throw new InvalidOperationException("Запустить игру может только создатель комнаты."); }
     private static bool IsActiveInGame(Player player) => player.Status != PlayerStatus.Eliminated;
     private static bool IsWithinGracePeriod(Player player) => player.Status != PlayerStatus.Disconnected || player.DisconnectedAtUtc is null || DateTime.UtcNow - player.DisconnectedAtUtc.Value <= DisconnectGracePeriod;
+
+    private static bool HasLegalThrowIn(Room room, Player player)
+    {
+        if (player.Hand.Count == 0 || room.Table.Count == 0) return false;
+        var ranks = room.Table.Select(p => p.Attack.Rank)
+            .Concat(room.Table.Where(p => p.Defense is not null).Select(p => p.Defense!.Rank))
+            .ToHashSet();
+        return player.Hand.Any(c => ranks.Contains(c.Rank));
+    }
+
+    private void ReopenPassedAttackersWithLegalThrowIn(Room room)
+    {
+        if (room.Table.Count == 0) return;
+        var defender = room.Players[room.DefenderIndex];
+        foreach (var attacker in room.Players.Where(p => IsActiveInGame(p) && p.Status == PlayerStatus.Connected && p.Id != defender.Id && room.PassedPlayerIds.Contains(p.Id)))
+        {
+            if (HasLegalThrowIn(room, attacker)) room.PassedPlayerIds.Remove(attacker.Id);
+        }
+    }
 
     private void DrawUpToSix(Room room, Player player)
     {
