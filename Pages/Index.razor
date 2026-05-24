@@ -251,6 +251,12 @@ else
             return Task.CompletedTask;
         };
 
+        hub.On<string>("ActionError", message =>
+        {
+            error = message;
+            InvokeAsync(StateHasChanged);
+        });
+
         hub.On<IReadOnlyList<RoomSummary>>("RoomsUpdated", updated =>
         {
             rooms = updated.ToList();
