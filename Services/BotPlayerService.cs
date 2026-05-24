@@ -64,6 +64,8 @@ public sealed class BotPlayerService(GameRoomService games, AiMoveAdvisorService
                 if (room.AttackerIndex >= room.Players.Count || room.DefenderIndex >= room.Players.Count) continue;
 
                 var defender = room.Players[room.DefenderIndex];
+                var attacker = room.Players[room.AttackerIndex];
+
                 if (defender.IsBot && defender.Status == PlayerStatus.Connected)
                 {
                     var undefended = room.Table.FirstOrDefault(p => p.Defense is null);
@@ -84,8 +86,9 @@ public sealed class BotPlayerService(GameRoomService games, AiMoveAdvisorService
                     }
                 }
 
-                var attacker = room.Players[room.AttackerIndex];
-                if (attacker.IsBot && attacker.Status == PlayerStatus.Connected)
+                if (ShouldWaitForHumanThrowIn(room, defender)) return null;
+
+                if (attacker.IsBot && attacker.Status == PlayerStatus.Connected && !room.PassedPlayerIds.Contains(attacker.Id))
                 {
                     var attack = ChooseAttack(room, attacker);
                     if (attack is not null) return new BotAction(room.Code, attacker.Id, BotActionKind.Attack, attack.Code);
@@ -106,6 +109,24 @@ public sealed class BotPlayerService(GameRoomService games, AiMoveAdvisorService
             }
         }
         return null;
+    }
+
+    private static bool ShouldWaitForHumanThrowIn(Room room, Player defender)
+    {
+        if (room.Table.Count == 0) return false;
+        if (room.Table.Any(p => p.Defense is null)) return false;
+
+        return room.Players
+            .Where(p => !p.IsBot && p.Status == PlayerStatus.Connected && p.Id != defender.Id && !room.PassedPlayerIds.Contains(p.Id))
+            .Any(p => HasLegalThrowIn(room, p));
+    }
+
+    private static bool HasLegalThrowIn(Room room, Player player)
+    {
+        var ranks = room.Table.Select(p => p.Attack.Rank)
+            .Concat(room.Table.Where(p => p.Defense is not null).Select(p => p.Defense!.Rank))
+            .ToHashSet();
+        return player.Hand.Any(c => ranks.Contains(c.Rank));
     }
 
     private void Execute(BotAction action)
