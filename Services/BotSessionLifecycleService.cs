@@ -9,6 +9,8 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
         ?? throw new InvalidOperationException("GameRoomService._rooms field was not found.");
     private readonly FieldInfo _syncField = typeof(GameRoomService).GetField("_sync", BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("GameRoomService._sync field was not found.");
+    private readonly MethodInfo _startNewRoundMethod = typeof(GameRoomService).GetMethod("StartNewRound", BindingFlags.Instance | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("GameRoomService.StartNewRound method was not found.");
 
     public void CleanupStaleFinishedSessions()
     {
@@ -43,22 +45,26 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
             if (player.Status != PlayerStatus.Connected) throw new InvalidOperationException("Продолжить может только подключённый игрок.");
 
             ResetBotRoundMemory(room);
+            room.ContinuePlayerIds.Clear();
             room.ContinuePlayerIds.Add(player.Id);
             foreach (var bot in room.Players.Where(p => p.IsBot && p.Status == PlayerStatus.Connected))
             {
                 room.ContinuePlayerIds.Add(bot.Id);
             }
 
-            var continuing = room.Players.Count(p => room.ContinuePlayerIds.Contains(p.Id) && p.Status == PlayerStatus.Connected);
-            if (continuing < 2)
+            var continuingIds = room.Players
+                .Where(p => room.ContinuePlayerIds.Contains(p.Id) && p.Status == PlayerStatus.Connected)
+                .Select(p => p.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (continuingIds.Count < 2)
             {
                 DestroyRoom(room);
                 return false;
             }
 
-            room.RematchDeadlineUtc ??= DateTime.UtcNow.Add(GameRoomService.RematchWaitPeriod);
-            room.Log = "Игрок продолжает. ИИ автоматически готовы к новой партии. Память ИИ очищена для новой партии.";
-            return true;
+            StartNewRound(room, continuingIds);
+            return Rooms.ContainsKey(roomCode);
         }
     }
 
@@ -151,6 +157,11 @@ public sealed class BotSessionLifecycleService(GameRoomService games)
         room.SeenCardCodes.Clear();
         room.CardMemoryLog.Clear();
         Rooms.Remove(room.Code);
+    }
+
+    private void StartNewRound(Room room, HashSet<string> playerIds)
+    {
+        _startNewRoundMethod.Invoke(games, new object[] { room, playerIds });
     }
 
     private static void ResetBotRoundMemory(Room room)
