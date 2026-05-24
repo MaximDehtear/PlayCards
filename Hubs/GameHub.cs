@@ -4,7 +4,11 @@ using PlayCards.Services;
 
 namespace PlayCards.Hubs;
 
-public sealed class GameHub(GameRoomService games, BotPlayerService bots, SmartDefenseService smartDefense) : Hub
+public sealed class GameHub(
+    GameRoomService games,
+    BotPlayerService bots,
+    SmartDefenseService smartDefense,
+    ConnectionRecoveryService recovery) : Hub
 {
     public Task<IReadOnlyList<RoomSummary>> GetRooms() => Task.FromResult(games.GetRooms());
 
@@ -28,7 +32,7 @@ public sealed class GameHub(GameRoomService games, BotPlayerService bots, SmartD
 
     public async Task<object> ReconnectRoom(string roomCode, string playerId)
     {
-        var (room, player) = games.ReconnectRoom(roomCode, playerId, Context.ConnectionId);
+        var (room, player) = recovery.RecoverByPlayerId(roomCode, playerId, Context.ConnectionId);
         await Groups.AddToGroupAsync(Context.ConnectionId, room.Code);
         await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
         await BroadcastAfterBotTurns(room.Code);
