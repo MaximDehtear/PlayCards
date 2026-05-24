@@ -86,19 +86,47 @@ public sealed class GameHub(
 
     public async Task ContinueGame(string roomCode, string playerId)
     {
-        var stillInRoom = botLifecycle.ContinueHumanAndBots(roomCode, playerId);
-        await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
-        if (stillInRoom) await BroadcastAfterBotTurns(roomCode);
-        else await Clients.Caller.SendAsync("LeftRoom");
+        try
+        {
+            var stillInRoom = botLifecycle.ContinueHumanAndBots(roomCode, playerId);
+            await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
+            if (stillInRoom) await BroadcastAfterBotTurns(roomCode);
+            else await Clients.Caller.SendAsync("LeftRoom");
+        }
+        catch (InvalidOperationException ex) when (IsMissingOrStaleSession(ex))
+        {
+            await Clients.Caller.SendAsync("ActionError", "Комната уже удалена или сессия устарела. Я вернул тебя на главный экран — создай новую комнату.");
+            await Clients.Caller.SendAsync("LeftRoom");
+            await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
+        }
+        catch (InvalidOperationException ex)
+        {
+            await Clients.Caller.SendAsync("ActionError", $"Не удалось продолжить игру: {ex.Message}");
+            throw;
+        }
     }
 
     public async Task LeaveRoom(string roomCode, string playerId)
     {
-        var stillExists = games.LeaveRoom(roomCode, playerId);
-        if (stillExists) stillExists = botLifecycle.RemoveBotsAfterHumanLeaves(roomCode);
-        await Clients.Caller.SendAsync("LeftRoom");
-        await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
-        if (stillExists) await BroadcastAfterBotTurns(roomCode);
+        try
+        {
+            var stillExists = games.LeaveRoom(roomCode, playerId);
+            if (stillExists) stillExists = botLifecycle.RemoveBotsAfterHumanLeaves(roomCode);
+            await Clients.Caller.SendAsync("LeftRoom");
+            await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
+            if (stillExists) await BroadcastAfterBotTurns(roomCode);
+        }
+        catch (InvalidOperationException ex) when (IsMissingOrStaleSession(ex))
+        {
+            await Clients.Caller.SendAsync("ActionError", "Комната уже удалена или сессия устарела. Я очистил локальную сессию.");
+            await Clients.Caller.SendAsync("LeftRoom");
+            await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
+        }
+        catch (InvalidOperationException ex)
+        {
+            await Clients.Caller.SendAsync("ActionError", $"Не удалось выйти из комнаты: {ex.Message}");
+            throw;
+        }
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
@@ -115,24 +143,33 @@ public sealed class GameHub(
 
     private async Task BroadcastAfterBotTurns(string roomCode)
     {
-        rules.NormalizeRoom(roomCode);
-        var changedRooms = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { roomCode };
-        foreach (var changedRoom in bots.RunBotTurns()) changedRooms.Add(changedRoom);
-
-        foreach (var changedRoom in changedRooms)
+        try
         {
-            try
-            {
-                rules.NormalizeRoom(changedRoom);
-                await BroadcastRoom(changedRoom);
-            }
-            catch (InvalidOperationException)
-            {
-                // Room may be removed by cleanup/rematch.
-            }
-        }
+            rules.NormalizeRoom(roomCode);
+            var changedRooms = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { roomCode };
+            foreach (var changedRoom in bots.RunBotTurns()) changedRooms.Add(changedRoom);
 
-        await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
+            foreach (var changedRoom in changedRooms)
+            {
+                try
+                {
+                    rules.NormalizeRoom(changedRoom);
+                    await BroadcastRoom(changedRoom);
+                }
+                catch (InvalidOperationException)
+                {
+                    // Room may be removed by cleanup/everyone leaving.
+                }
+            }
+
+            await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
+        }
+        catch (InvalidOperationException ex) when (IsMissingOrStaleSession(ex))
+        {
+            await Clients.Caller.SendAsync("ActionError", "Комната была удалена во время обновления состояния. Я вернул тебя на главный экран.");
+            await Clients.Caller.SendAsync("LeftRoom");
+            await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
+        }
     }
 
     public async Task BroadcastRoom(string roomCode)
@@ -147,4 +184,9 @@ public sealed class GameHub(
             await Clients.Client(connectionId).SendAsync("GameStateUpdated", state);
         }
     }
+
+    private static bool IsMissingOrStaleSession(InvalidOperationException ex) =>
+        ex.Message.Contains("Комната не найдена", StringComparison.OrdinalIgnoreCase) ||
+        ex.Message.Contains("сессия устарела", StringComparison.OrdinalIgnoreCase) ||
+        ex.Message.Contains("Игрок не найден", StringComparison.OrdinalIgnoreCase);
 }
