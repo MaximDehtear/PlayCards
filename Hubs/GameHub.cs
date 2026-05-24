@@ -13,7 +13,7 @@ public sealed class GameHub(GameRoomService games, BotPlayerService bots, SmartD
         var (room, player) = games.CreateRoom(roomName, playerName, Context.ConnectionId);
         await Groups.AddToGroupAsync(Context.ConnectionId, room.Code);
         await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
-        await BroadcastRoom(room.Code);
+        await BroadcastAfterBotTurns(room.Code);
         return new { roomCode = room.Code, playerId = player.Id };
     }
 
@@ -22,7 +22,7 @@ public sealed class GameHub(GameRoomService games, BotPlayerService bots, SmartD
         var (room, player) = games.JoinRoom(roomCode, playerName, Context.ConnectionId);
         await Groups.AddToGroupAsync(Context.ConnectionId, room.Code);
         await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
-        await BroadcastRoom(room.Code);
+        await BroadcastAfterBotTurns(room.Code);
         return new { roomCode = room.Code, playerId = player.Id };
     }
 
@@ -31,7 +31,7 @@ public sealed class GameHub(GameRoomService games, BotPlayerService bots, SmartD
         var (room, player) = games.ReconnectRoom(roomCode, playerId, Context.ConnectionId);
         await Groups.AddToGroupAsync(Context.ConnectionId, room.Code);
         await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
-        await BroadcastRoom(room.Code);
+        await BroadcastAfterBotTurns(room.Code);
         return new { roomCode = room.Code, playerId = player.Id };
     }
 
@@ -46,7 +46,7 @@ public sealed class GameHub(GameRoomService games, BotPlayerService bots, SmartD
     {
         games.StartGame(roomCode, playerId);
         await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
-        await BroadcastRoom(roomCode);
+        await BroadcastAfterBotTurns(roomCode);
     }
 
     public async Task Attack(string roomCode, string playerId, string cardCode)
@@ -55,32 +55,32 @@ public sealed class GameHub(GameRoomService games, BotPlayerService bots, SmartD
         {
             games.Attack(roomCode, playerId, cardCode);
         }
-        await BroadcastRoom(roomCode);
+        await BroadcastAfterBotTurns(roomCode);
     }
 
     public async Task Defend(string roomCode, string playerId, string attackCode, string defenseCode)
     {
         games.Defend(roomCode, playerId, attackCode, defenseCode);
-        await BroadcastRoom(roomCode);
+        await BroadcastAfterBotTurns(roomCode);
     }
 
     public async Task Take(string roomCode, string playerId)
     {
         games.Take(roomCode, playerId);
-        await BroadcastRoom(roomCode);
+        await BroadcastAfterBotTurns(roomCode);
     }
 
     public async Task Pass(string roomCode, string playerId)
     {
         games.Pass(roomCode, playerId);
-        await BroadcastRoom(roomCode);
+        await BroadcastAfterBotTurns(roomCode);
     }
 
     public async Task ContinueGame(string roomCode, string playerId)
     {
         var stillInRoom = games.ContinueGame(roomCode, playerId);
         await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
-        if (stillInRoom) await BroadcastRoom(roomCode);
+        if (stillInRoom) await BroadcastAfterBotTurns(roomCode);
         else await Clients.Caller.SendAsync("LeftRoom");
     }
 
@@ -89,7 +89,7 @@ public sealed class GameHub(GameRoomService games, BotPlayerService bots, SmartD
         var stillExists = games.LeaveRoom(roomCode, playerId);
         await Clients.Caller.SendAsync("LeftRoom");
         await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
-        if (stillExists) await BroadcastRoom(roomCode);
+        if (stillExists) await BroadcastAfterBotTurns(roomCode);
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
@@ -102,6 +102,26 @@ public sealed class GameHub(GameRoomService games, BotPlayerService bots, SmartD
             await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
         }
         await base.OnDisconnectedAsync(exception);
+    }
+
+    private async Task BroadcastAfterBotTurns(string roomCode)
+    {
+        var changedRooms = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { roomCode };
+        foreach (var changedRoom in bots.RunBotTurns()) changedRooms.Add(changedRoom);
+
+        foreach (var changedRoom in changedRooms)
+        {
+            try
+            {
+                await BroadcastRoom(changedRoom);
+            }
+            catch (InvalidOperationException)
+            {
+                // Room may be removed by cleanup/rematch.
+            }
+        }
+
+        await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
     }
 
     public async Task BroadcastRoom(string roomCode)
