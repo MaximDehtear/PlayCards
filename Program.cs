@@ -12,6 +12,7 @@ builder.Services.AddSingleton<AiMoveAdvisorService>();
 builder.Services.AddSingleton<BotPlayerService>();
 builder.Services.AddSingleton<SmartDefenseService>();
 builder.Services.AddSingleton<ConnectionRecoveryService>();
+builder.Services.AddSingleton<BotSessionLifecycleService>();
 builder.Services.AddHostedService<DisconnectedPlayerCleanupService>();
 
 var app = builder.Build();
