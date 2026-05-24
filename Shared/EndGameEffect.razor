@@ -8,7 +8,7 @@
             <div class="fireworks">
                 @foreach (var burst in _bursts)
                 {
-                    <span class="firework" style="left:@burst.Left%; top:@burst.Top%; animation-delay:@burst.DelayMsms"></span>
+                    <span class="firework" style="left:@(burst.Left)%; top:@(burst.Top)%; animation-delay:@(burst.DelayMs)ms"></span>
                 }
             </div>
         }
@@ -17,7 +17,7 @@
             <div class="laugh-field">
                 @foreach (var laugh in _laughs)
                 {
-                    <span class="laugh" style="left:@laugh.Left%; top:@laugh.Top%; animation-delay:@laugh.DelayMsms">ха</span>
+                    <span class="laugh" style="left:@(laugh.Left)%; top:@(laugh.Top)%; animation-delay:@(laugh.DelayMs)ms">ха</span>
                 }
             </div>
         }
@@ -31,7 +31,6 @@
     private readonly List<EffectItem> _bursts = [];
     private readonly List<EffectItem> _laughs = [];
     private bool _visible;
-    private PeriodicTimer? _timer;
     private CancellationTokenSource? _cts;
 
     protected override void OnParametersSet()
@@ -73,7 +72,6 @@
 
     public void Dispose()
     {
-        _timer?.Dispose();
         _cts?.Cancel();
         _cts?.Dispose();
     }
