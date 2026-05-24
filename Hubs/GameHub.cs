@@ -86,8 +86,7 @@ public sealed class GameHub(
 
     public async Task ContinueGame(string roomCode, string playerId)
     {
-        var stillInRoom = games.ContinueGame(roomCode, playerId);
-        if (stillInRoom) botLifecycle.ContinueBotsWithHuman(roomCode);
+        var stillInRoom = botLifecycle.ContinueHumanAndBots(roomCode, playerId);
         await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
         if (stillInRoom) await BroadcastAfterBotTurns(roomCode);
         else await Clients.Caller.SendAsync("LeftRoom");
