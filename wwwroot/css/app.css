@@ -87,6 +87,52 @@ table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--line); }
 th { color: var(--muted); }
 
+.endgame-effect {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    overflow: hidden;
+}
+
+.firework {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    animation: firework-burst 900ms ease-out both;
+    box-shadow:
+        0 -34px 0 #fef08a,
+        24px -24px 0 #60a5fa,
+        34px 0 0 #f472b6,
+        24px 24px 0 #34d399,
+        0 34px 0 #fb923c,
+        -24px 24px 0 #a78bfa,
+        -34px 0 0 #f87171,
+        -24px -24px 0 #22d3ee;
+}
+
+@keyframes firework-burst {
+    0% { transform: scale(.15); opacity: 0; filter: blur(0); }
+    20% { opacity: 1; }
+    100% { transform: scale(2.8); opacity: 0; filter: blur(1px); }
+}
+
+.laugh {
+    position: absolute;
+    font-size: clamp(1.4rem, 5vw, 3.2rem);
+    font-weight: 900;
+    color: #fca5a5;
+    text-shadow: 0 10px 28px rgba(0,0,0,.45);
+    animation: laugh-pop 700ms ease-out both;
+}
+
+@keyframes laugh-pop {
+    0% { transform: translateY(10px) rotate(-8deg) scale(.55); opacity: 0; }
+    18% { opacity: 1; }
+    100% { transform: translateY(-18px) rotate(10deg) scale(1.2); opacity: 0; }
+}
+
 @media (max-width: 820px) {
     .two, .table-grid { grid-template-columns: 1fr; }
     .hero, .game-header { align-items: flex-start; flex-direction: column; }
