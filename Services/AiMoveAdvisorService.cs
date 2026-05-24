@@ -19,7 +19,8 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
         {
             TrimMemory(bot);
             var prompt = BuildPrompt(room, bot, role, legalCards);
-            bot.BotMemory.Add($"{DateTime.UtcNow:HH:mm:ss}: {bot.Name} asks AI as {role}. Legal cards: {string.Join(", ", legalCards.Select(c => c.Code))}. Hand: {string.Join(", ", bot.Hand.Select(c => c.Code))}. Trump: {room.TrumpSuit}.");
+            var limits = BuildRoundLimits(room);
+            bot.BotMemory.Add($"{DateTime.UtcNow:HH:mm:ss}: {bot.Name} asks AI as {role}. Legal cards: {string.Join(", ", legalCards.Select(c => c.Code))}. Hand: {string.Join(", ", bot.Hand.Select(c => c.Code))}. Trump: {room.TrumpSuit}. Defender cards: {limits.DefenderCardCount}. Attacks on table: {limits.AttackCardsOnTable}. Can add attacks: {limits.CanAddMoreAttackCards}.");
 
             var payload = JsonSerializer.Serialize(new
             {
@@ -82,6 +83,7 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
 
     private static string BuildPrompt(Room room, Player bot, string role, IReadOnlyList<Card> legalCards)
     {
+        var limits = BuildRoundLimits(room);
         var state = new
         {
             task = "You are a separate Gemini chat for this specific Durak bot. Continue from this bot's private memory and choose one legal move. Return only JSON: {\"cardCode\":\"...\",\"reason\":\"short reason\"}.",
@@ -99,7 +101,7 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
                 {
                     "defense" => "I am defending. Which legal card should I use to beat the attack, or should I take if no legal card exists?",
                     "attack" => "I am attacking. Which legal card should I lead with?",
-                    "throw-in" => "I can throw in. Which legal card should I add, or should I pass if throwing is bad?",
+                    "throw-in" => "I can throw in. Decide whether it is smart to add pressure based on the defender card count, table, and memory. If you choose to throw in, choose one legal card.",
                     _ => "What is the best legal move?"
                 }
             },
@@ -108,12 +110,16 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
                 "Choose only from legalCardCodes.",
                 "Do not invent cards.",
                 "Do not assume unknown deck cards.",
-                "Use only myCards, table, players card counts, and memory.",
+                "You only know your own hand. Other players' hands are hidden; you only know their card counts.",
+                "Use only myCards, table, players card counts, roundLimits, and memory.",
                 "Memory contains visible events: cards beaten, discarded, taken, and prior advice.",
+                "When throwing in, consider defenderCardCount and maxTotalAttackCardsAgainstDefender.",
+                "Do not waste high cards or trump cards without a reason.",
                 "Prefer saving trump cards unless necessary.",
                 "If several moves are similar, prefer the lowest non-trump card."
             },
             legalCardCodes = legalCards.Select(c => c.Code).ToList(),
+            roundLimits = limits,
             table = room.Table.Select(p => new { attack = p.Attack.Code, defense = p.Defense?.Code }).ToList(),
             players = room.Players.Select(p => new { p.Name, p.IsBot, cardCount = p.Hand.Count, p.Status }).ToList(),
             privateBotMemory = bot.BotMemory.TakeLast(120).ToList(),
@@ -123,10 +129,41 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
         return JsonSerializer.Serialize(state);
     }
 
+    private static RoundLimits BuildRoundLimits(Room room)
+    {
+        var defender = room.DefenderIndex >= 0 && room.DefenderIndex < room.Players.Count
+            ? room.Players[room.DefenderIndex]
+            : null;
+        var attackCardsOnTable = room.Table.Count;
+        var defendedCardsOnTable = room.Table.Count(p => p.Defense is not null);
+        var defenderCardCount = defender?.Hand.Count ?? 0;
+        var maxTotalAttackCardsAgainstDefender = defenderCardCount + defendedCardsOnTable;
+
+        return new RoundLimits(
+            DefenderName: defender?.Name,
+            DefenderIsBot: defender?.IsBot,
+            DefenderCardCount: defenderCardCount,
+            AttackCardsOnTable: attackCardsOnTable,
+            DefendedCardsOnTable: defendedCardsOnTable,
+            MaxTotalAttackCardsAgainstDefender: maxTotalAttackCardsAgainstDefender,
+            RemainingAttackSlotsAgainstDefender: Math.Max(0, maxTotalAttackCardsAgainstDefender - attackCardsOnTable),
+            CanAddMoreAttackCards: attackCardsOnTable < maxTotalAttackCardsAgainstDefender);
+    }
+
     private static void TrimMemory(Player bot)
     {
         const int maxItems = 240;
         if (bot.BotMemory.Count <= maxItems) return;
         bot.BotMemory.RemoveRange(0, bot.BotMemory.Count - maxItems);
     }
+
+    private sealed record RoundLimits(
+        string? DefenderName,
+        bool? DefenderIsBot,
+        int DefenderCardCount,
+        int AttackCardsOnTable,
+        int DefendedCardsOnTable,
+        int MaxTotalAttackCardsAgainstDefender,
+        int RemainingAttackSlotsAgainstDefender,
+        bool CanAddMoreAttackCards);
 }
