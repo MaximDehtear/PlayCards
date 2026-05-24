@@ -102,7 +102,6 @@ public sealed class GameHub(
         catch (InvalidOperationException ex)
         {
             await Clients.Caller.SendAsync("ActionError", $"Не удалось продолжить игру: {ex.Message}");
-            throw;
         }
     }
 
@@ -125,7 +124,6 @@ public sealed class GameHub(
         catch (InvalidOperationException ex)
         {
             await Clients.Caller.SendAsync("ActionError", $"Не удалось выйти из комнаты: {ex.Message}");
-            throw;
         }
     }
 
