@@ -8,7 +8,8 @@ public sealed class GameHub(
     GameRoomService games,
     BotPlayerService bots,
     SmartDefenseService smartDefense,
-    ConnectionRecoveryService recovery) : Hub
+    ConnectionRecoveryService recovery,
+    TurnRulesService rules) : Hub
 {
     public Task<IReadOnlyList<RoomSummary>> GetRooms() => Task.FromResult(games.GetRooms());
 
@@ -49,12 +50,14 @@ public sealed class GameHub(
     public async Task StartGame(string roomCode, string playerId)
     {
         games.StartGame(roomCode, playerId);
+        rules.NormalizeRoom(roomCode);
         await Clients.All.SendAsync("RoomsUpdated", games.GetRooms());
         await BroadcastAfterBotTurns(roomCode);
     }
 
     public async Task Attack(string roomCode, string playerId, string cardCode)
     {
+        rules.EnsureCanAttack(roomCode, playerId);
         if (!smartDefense.TryDefendFirst(roomCode, playerId, cardCode))
         {
             games.Attack(roomCode, playerId, cardCode);
@@ -110,6 +113,7 @@ public sealed class GameHub(
 
     private async Task BroadcastAfterBotTurns(string roomCode)
     {
+        rules.NormalizeRoom(roomCode);
         var changedRooms = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { roomCode };
         foreach (var changedRoom in bots.RunBotTurns()) changedRooms.Add(changedRoom);
 
@@ -117,6 +121,7 @@ public sealed class GameHub(
         {
             try
             {
+                rules.NormalizeRoom(changedRoom);
                 await BroadcastRoom(changedRoom);
             }
             catch (InvalidOperationException)
@@ -130,6 +135,7 @@ public sealed class GameHub(
 
     public async Task BroadcastRoom(string roomCode)
     {
+        rules.NormalizeRoom(roomCode);
         var scoreboard = games.GetScoreboard(roomCode);
         await Clients.Group(roomCode).SendAsync("ScoreboardUpdated", scoreboard);
 
