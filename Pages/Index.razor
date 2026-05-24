@@ -109,6 +109,14 @@ else
                     <button @onclick="StartGame">Старт</button>
                 }
             </div>
+            @if (state.Phase == GamePhase.Lobby && state.Players.Count < 6)
+            {
+                <BotControls />
+            }
+            @if (state.Phase == GamePhase.Lobby && state.Players.Count >= 6)
+            {
+                <p class="hint">Комната заполнена: максимум 6 игроков вместе с ИИ.</p>
+            }
             <div class="players">
                 @foreach (var p in state.Players)
                 {
