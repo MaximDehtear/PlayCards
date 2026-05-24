@@ -6,6 +6,7 @@ namespace PlayCards.Services;
 public sealed class DisconnectedPlayerCleanupService(
     GameRoomService games,
     BotPlayerService bots,
+    BotRoomReconnectProtectionService reconnectProtection,
     IHubContext<GameHub> hubContext,
     ILogger<DisconnectedPlayerCleanupService> logger) : BackgroundService
 {
@@ -18,6 +19,7 @@ public sealed class DisconnectedPlayerCleanupService(
             var changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             try
             {
+                foreach (var roomCode in reconnectProtection.ProtectDisconnectedHumansInBotRooms()) changed.Add(roomCode);
                 foreach (var roomCode in games.TickRoomTimers()) changed.Add(roomCode);
                 foreach (var roomCode in bots.RunBotTurns()) changed.Add(roomCode);
             }
