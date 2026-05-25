@@ -65,7 +65,7 @@ public sealed class BotPlayerService(GameRoomService games, TurnRulesService rul
                 if (room.AttackerIndex >= room.Players.Count || room.DefenderIndex >= room.Players.Count) continue;
 
                 var defender = room.Players[room.DefenderIndex];
-                var attacker = room.Players[room.AttackerIndex];
+                var thrower = room.Players[room.AttackerIndex];
 
                 if (defender.IsBot && defender.Status == PlayerStatus.Connected)
                 {
@@ -87,25 +87,18 @@ public sealed class BotPlayerService(GameRoomService games, TurnRulesService rul
                     }
                 }
 
+                if (room.Table.Any(p => p.Defense is null)) continue;
                 if (ShouldWaitForHumanThrowIn(room, defender)) return null;
 
-                if (attacker.IsBot && attacker.Status == PlayerStatus.Connected && !room.PassedPlayerIds.Contains(attacker.Id))
+                if (thrower.IsBot && thrower.Status == PlayerStatus.Connected && !room.PassedPlayerIds.Contains(thrower.Id))
                 {
-                    var attack = ChooseAttack(room, attacker);
-                    if (attack is not null) return new BotAction(room.Code, attacker.Id, BotActionKind.Attack, attack.Code);
+                    var attack = ChooseAttack(room, thrower);
+                    if (attack is not null) return new BotAction(room.Code, thrower.Id, BotActionKind.Attack, attack.Code);
                     if (room.Table.Count > 0)
                     {
-                        RememberTableDestination(room, attacker, "ушла в сброс после бито");
-                        return new BotAction(room.Code, attacker.Id, BotActionKind.Pass);
+                        RememberTableDestination(room, thrower, "ушла в сброс после бито");
+                        return new BotAction(room.Code, thrower.Id, BotActionKind.Pass);
                     }
-                }
-
-                foreach (var bot in room.Players.Where(p => p.IsBot && p.Status == PlayerStatus.Connected && p.Id != defender.Id && p.Id != attacker.Id))
-                {
-                    if (room.Table.Count == 0 || room.PassedPlayerIds.Contains(bot.Id)) continue;
-                    var card = ChooseThrowIn(room, bot);
-                    if (card is not null) return new BotAction(room.Code, bot.Id, BotActionKind.Attack, card.Code);
-                    return new BotAction(room.Code, bot.Id, BotActionKind.Pass);
                 }
             }
         }
@@ -116,14 +109,19 @@ public sealed class BotPlayerService(GameRoomService games, TurnRulesService rul
     {
         if (room.Table.Count == 0) return false;
         if (room.Table.Any(p => p.Defense is null)) return false;
+        if (room.AttackerIndex < 0 || room.AttackerIndex >= room.Players.Count) return false;
 
-        return room.Players
-            .Where(p => !p.IsBot && p.Status == PlayerStatus.Connected && p.Id != defender.Id && !room.PassedPlayerIds.Contains(p.Id))
-            .Any(p => HasLegalThrowIn(room, p));
+        var thrower = room.Players[room.AttackerIndex];
+        return !thrower.IsBot &&
+            thrower.Status == PlayerStatus.Connected &&
+            thrower.Id != defender.Id &&
+            !room.PassedPlayerIds.Contains(thrower.Id) &&
+            HasLegalThrowIn(room, thrower);
     }
 
     private static bool HasLegalThrowIn(Room room, Player player)
     {
+        if (room.Table.Count == 0 || player.Hand.Count == 0 || !TurnRulesService.CanAddAttackCard(room)) return false;
         var ranks = room.Table.Select(p => p.Attack.Rank)
             .Concat(room.Table.Where(p => p.Defense is not null).Select(p => p.Defense!.Rank))
             .ToHashSet();
@@ -159,12 +157,10 @@ public sealed class BotPlayerService(GameRoomService games, TurnRulesService rul
         if (bot.Hand.Count == 0) return null;
         if (room.Table.Count == 0)
         {
-            var legal = bot.Hand
-                .OrderBy(c => c.Suit == room.TrumpSuit ? 1 : 0)
-                .ThenBy(c => c.Rank)
-                .ToList();
+            var legal = OrderedAttackLeadCards(room, bot).ToList();
             var aiCode = ai.ChooseCard(room, bot, "attack", legal);
-            return legal.FirstOrDefault(c => string.Equals(c.Code, aiCode, StringComparison.OrdinalIgnoreCase)) ?? legal.FirstOrDefault();
+            var aiChoice = legal.FirstOrDefault(c => string.Equals(c.Code, aiCode, StringComparison.OrdinalIgnoreCase));
+            return IsStrategicAttackChoice(room, bot, aiChoice) ? aiChoice : legal.FirstOrDefault();
         }
 
         return ChooseThrowIn(room, bot);
@@ -179,12 +175,86 @@ public sealed class BotPlayerService(GameRoomService games, TurnRulesService rul
 
         var legal = bot.Hand
             .Where(c => ranks.Contains(c.Rank))
-            .OrderBy(c => c.Suit == room.TrumpSuit ? 1 : 0)
+            .OrderBy(c => ThrowInCost(room, bot, c))
             .ThenBy(c => c.Rank)
             .ToList();
 
+        if (ShouldPassInsteadOfThrowing(room, bot, legal)) return null;
+
         var aiCode = ai.ChooseCard(room, bot, "throw-in", legal);
-        return legal.FirstOrDefault(c => string.Equals(c.Code, aiCode, StringComparison.OrdinalIgnoreCase)) ?? legal.FirstOrDefault();
+        var aiChoice = legal.FirstOrDefault(c => string.Equals(c.Code, aiCode, StringComparison.OrdinalIgnoreCase));
+        return IsStrategicThrowInChoice(room, bot, aiChoice, legal) ? aiChoice : legal.FirstOrDefault();
+    }
+
+    private static IEnumerable<Card> OrderedAttackLeadCards(Room room, Player bot)
+    {
+        var deckIsLarge = room.Deck.Count >= 12;
+        return bot.Hand
+            .OrderBy(c => AttackLeadCost(room, bot, c, deckIsLarge))
+            .ThenBy(c => c.Rank);
+    }
+
+    private static int AttackLeadCost(Room room, Player bot, Card card, bool deckIsLarge)
+    {
+        var isTrump = card.Suit == room.TrumpSuit;
+        var sameRankCount = bot.Hand.Count(c => c.Rank == card.Rank);
+        var sameRankTrumpCount = bot.Hand.Count(c => c.Rank == card.Rank && c.Suit == room.TrumpSuit);
+        var cost = (int)card.Rank;
+
+        if (isTrump) cost += deckIsLarge ? 500 : 140;
+        if (sameRankCount >= 2) cost -= 8;
+        if (deckIsLarge && sameRankTrumpCount > 0) cost += 40;
+        if (bot.Hand.Count <= 3 && !deckIsLarge) cost -= 20;
+
+        return cost;
+    }
+
+    private static int ThrowInCost(Room room, Player bot, Card card)
+    {
+        var deckIsLarge = room.Deck.Count >= 10;
+        var defender = room.DefenderIndex >= 0 && room.DefenderIndex < room.Players.Count ? room.Players[room.DefenderIndex] : null;
+        var isTrump = card.Suit == room.TrumpSuit;
+        var cost = (int)card.Rank;
+
+        if (isTrump) cost += deckIsLarge ? 650 : 180;
+        if (defender is not null && defender.Hand.Count <= 2) cost -= 35;
+        if (bot.Hand.Count <= 2 && room.Deck.Count == 0) cost -= 60;
+
+        return cost;
+    }
+
+    private static bool ShouldPassInsteadOfThrowing(Room room, Player bot, IReadOnlyList<Card> legal)
+    {
+        if (legal.Count == 0) return true;
+        var defender = room.DefenderIndex >= 0 && room.DefenderIndex < room.Players.Count ? room.Players[room.DefenderIndex] : null;
+        var deckIsLarge = room.Deck.Count >= 10;
+        var onlyTrump = legal.All(c => c.Suit == room.TrumpSuit);
+        var hasNonTrump = legal.Any(c => c.Suit != room.TrumpSuit);
+
+        if (deckIsLarge && onlyTrump) return true;
+        if (deckIsLarge && hasNonTrump && legal.First().Suit == room.TrumpSuit) return true;
+        if (defender is not null && defender.Hand.Count <= 1) return false;
+        if (bot.Hand.Count <= 2 && room.Deck.Count == 0) return false;
+
+        var alreadyPressed = room.Table.Count >= 3;
+        if (deckIsLarge && alreadyPressed) return true;
+
+        return false;
+    }
+
+    private static bool IsStrategicAttackChoice(Room room, Player bot, Card? card)
+    {
+        if (card is null) return false;
+        if (card.Suit != room.TrumpSuit) return true;
+        return room.Deck.Count <= 6 || bot.Hand.Count <= 2;
+    }
+
+    private static bool IsStrategicThrowInChoice(Room room, Player bot, Card? card, IReadOnlyList<Card> legal)
+    {
+        if (card is null) return false;
+        if (card.Suit != room.TrumpSuit) return true;
+        if (legal.Any(c => c.Suit != room.TrumpSuit)) return false;
+        return room.Deck.Count <= 6 || bot.Hand.Count <= 2;
     }
 
     private static bool CanBeat(Card attack, Card defense, Suit trump) =>
