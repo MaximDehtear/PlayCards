@@ -22,10 +22,7 @@ public sealed partial class GameRoomService
 
             room.Table.Add(new AttackPair { Attack = card });
             room.PassedPlayerIds.Clear();
-            room.Log = $"{player.Name} атакует {card.Label}.";
-
-            if (room.Table.Count > 0)
-                room.AttackerIndex = NextThrowerIndex(room, room.AttackerIndex);
+            room.Log = $"{player.Name} атакует {card.Label}. Можно подкинуть ещё или нажать Пас.";
 
             CheckInstantFinish(room);
             return room;
@@ -77,7 +74,7 @@ public sealed partial class GameRoomService
             RefillHandsFair(room);
             room.AttackerIndex = NextPlayableIndex(room, room.DefenderIndex);
             room.DefenderIndex = NextPlayableIndex(room, room.AttackerIndex);
-            room.Log = $"{defender.Name} берёт карты. Следующий ход: {room.Players[room.AttackerIndex].Name}.";
+            room.Log = $"{defender.Name} берёт карты. Дальше подкидывать нельзя. Следующий ход: {room.Players[room.AttackerIndex].Name}.";
             CheckInstantFinish(room);
             return room;
         }
