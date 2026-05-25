@@ -173,7 +173,13 @@ else
     </section>
 
     <section class="panel">
-        <h2>Моя рука</h2>
+        <div class="hand-header">
+            <h2>Моя рука</h2>
+            <div class="hand-trump">
+                <span>Козырь</span>
+                <CardView Card="state.TrumpCard" />
+            </div>
+        </div>
         <div class="hand">
             @foreach (var card in state.MyHand)
             {
