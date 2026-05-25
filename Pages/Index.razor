@@ -67,7 +67,7 @@
 }
 else
 {
-    <EndGameEffect Result="GetEndGameResult()" TriggerKey="GetEndGameTriggerKey()" />
+    <EndGameEffect Result="GetEndGameResult()" TriggerKey="endGameEffectKey" />
 
     <section class="game-header panel">
         <div>
@@ -225,6 +225,7 @@ else
     private string? roomCode;
     private string? selectedAttackCode;
     private string? error;
+    private string? endGameEffectKey;
     private List<RoomSummary> rooms = [];
     private List<PublicPlayerState> scoreboard = [];
     private GameState? state;
@@ -276,8 +277,19 @@ else
         {
             if (playerId is null || updated.CurrentPlayerId == playerId)
             {
+                var previousPhase = state?.Phase;
                 state = updated;
                 selectedAttackCode = null;
+
+                if (updated.Phase == GamePhase.Finished && previousPhase != GamePhase.Finished)
+                {
+                    endGameEffectKey = $"{updated.RoomCode}:{updated.CurrentPlayerId}:{DateTime.UtcNow.Ticks}";
+                }
+                else if (updated.Phase != GamePhase.Finished)
+                {
+                    endGameEffectKey = null;
+                }
+
                 InvokeAsync(StateHasChanged);
             }
         });
@@ -295,6 +307,7 @@ else
             roomCode = null;
             playerId = null;
             selectedAttackCode = null;
+            endGameEffectKey = null;
             await LoadRooms();
             await InvokeAsync(StateHasChanged);
         });
@@ -323,6 +336,7 @@ else
     {
         await SafeCall(async () =>
         {
+            endGameEffectKey = null;
             var result = await hub!.InvokeAsync<JoinResult>("CreateRoom", roomName, playerName);
             roomCode = result.RoomCode;
             playerId = result.PlayerId;
@@ -340,6 +354,7 @@ else
     {
         await SafeCall(async () =>
         {
+            endGameEffectKey = null;
             var result = await hub!.InvokeAsync<JoinResult>("JoinRoom", joinCode.Trim().ToUpperInvariant(), playerName);
             roomCode = result.RoomCode;
             playerId = result.PlayerId;
@@ -359,6 +374,7 @@ else
 
         await SafeCall(async () =>
         {
+            endGameEffectKey = null;
             var result = await hub!.InvokeAsync<JoinResult>("ReconnectRoom", savedRoomCode, savedPlayerId);
             roomCode = result.RoomCode;
             playerId = result.PlayerId;
@@ -403,13 +419,6 @@ else
         var me = state.Players.FirstOrDefault(p => p.Id == playerId);
         if (me is null) return EndGameResult.None;
         return me.Cards == 0 ? EndGameResult.Win : EndGameResult.Lose;
-    }
-
-    private string? GetEndGameTriggerKey()
-    {
-        if (state?.Phase != GamePhase.Finished || string.IsNullOrWhiteSpace(playerId)) return null;
-        var scoreStamp = string.Join("|", state.Players.OrderBy(p => p.Id).Select(p => $"{p.Id}:{p.Wins}:{p.Losses}:{p.Cards}"));
-        return $"{state.RoomCode}:{playerId}:{scoreStamp}";
     }
 
     private static string PlayerStatusText(PublicPlayerState p)
