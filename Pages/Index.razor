@@ -175,10 +175,13 @@ else
     <section class="panel">
         <div class="hand-header">
             <h2>Моя рука</h2>
-            <div class="hand-trump">
-                <span>Козырь</span>
-                <CardView Card="state.TrumpCard" />
-            </div>
+            @if (state.TrumpSuit is not null)
+            {
+                <div class="hand-trump">
+                    <span>Козырь</span>
+                    <span class='trump-suit @(state.TrumpSuit is Suit.Diamonds or Suit.Hearts ? "red" : "black")'>@Card.SuitToSymbol(state.TrumpSuit.Value)</span>
+                </div>
+            }
         </div>
         <div class="hand">
             @foreach (var card in state.MyHand)
