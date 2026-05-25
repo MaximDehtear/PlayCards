@@ -8,12 +8,12 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(2) };
 
-    public string? ChooseCard(Room room, Player bot, string role, IReadOnlyList<Card> legalCards)
+    public AiMoveAdvice ChooseCard(Room room, Player bot, string role, IReadOnlyList<Card> legalCards)
     {
-        if (legalCards.Count == 0) return null;
+        if (legalCards.Count == 0) return AiMoveAdvice.Fallback();
 
         var key = Environment.GetEnvironmentVariable(string.Concat("GEM", "INI", "_API", "_KEY"));
-        if (string.IsNullOrWhiteSpace(key)) return null;
+        if (string.IsNullOrWhiteSpace(key)) return AiMoveAdvice.Fallback();
 
         try
         {
@@ -36,7 +36,7 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
             if (!response.IsSuccessStatusCode)
             {
                 bot.BotMemory.Add($"{DateTime.UtcNow:HH:mm:ss}: AI did not answer successfully; fallback logic will be used.");
-                return null;
+                return AiMoveAdvice.Fallback();
             }
 
             var responseText = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
@@ -44,7 +44,7 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
             if (string.IsNullOrWhiteSpace(modelText))
             {
                 bot.BotMemory.Add($"{DateTime.UtcNow:HH:mm:ss}: AI returned empty answer; fallback logic will be used.");
-                return null;
+                return AiMoveAdvice.Fallback();
             }
 
             using var answer = JsonDocument.Parse(modelText);
@@ -54,13 +54,13 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
             var legal = !wantsPass && legalCards.Any(c => string.Equals(c.Code, code, StringComparison.OrdinalIgnoreCase));
 
             bot.BotMemory.Add($"{DateTime.UtcNow:HH:mm:ss}: AI advised {(wantsPass ? "pass" : code ?? "none")}. Reason: {reason ?? "not provided"}. Valid card: {legal}.");
-            return legal ? code : null;
+            return wantsPass ? AiMoveAdvice.AiPass() : legal ? AiMoveAdvice.AiCard(code) : AiMoveAdvice.Fallback();
         }
         catch (Exception ex)
         {
             bot.BotMemory.Add($"{DateTime.UtcNow:HH:mm:ss}: AI advisor failed; fallback logic will be used.");
             logger.LogDebug(ex, "AI advisor failed; deterministic bot logic will be used.");
-            return null;
+            return AiMoveAdvice.Fallback();
         }
     }
 
@@ -169,4 +169,11 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
         int MaxTotalAttackCardsAgainstDefender,
         int RemainingAttackSlotsAgainstDefender,
         bool CanAddMoreAttackCards);
+}
+
+public readonly record struct AiMoveAdvice(string? CardCode, bool UsedAi)
+{
+    public static AiMoveAdvice Fallback() => new(null, false);
+    public static AiMoveAdvice AiPass() => new(null, true);
+    public static AiMoveAdvice AiCard(string? cardCode) => new(cardCode, true);
 }
