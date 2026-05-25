@@ -47,7 +47,6 @@ public sealed partial class GameRoomService
             }
 
             pair.Defense = defense;
-            ReopenPassedAttackersWithLegalThrowIn(room);
             room.Log = $"{defender.Name} отбивает {pair.Attack.Label} картой {defense.Label}.";
             CheckInstantFinish(room);
             return room;
@@ -94,11 +93,9 @@ public sealed partial class GameRoomService
             room.PassedPlayerIds.Add(player.Id);
 
             var allDefended = room.Table.All(p => p.Defense is not null);
-            var attackers = room.Players.Where(p => CanStillPlay(room, p) && p.Id != defender.Id && p.Hand.Count > 0).ToList();
-            var hasLegalThrowIn = attackers.Any(p => !room.PassedPlayerIds.Contains(p.Id) && HasLegalThrowIn(room, p));
-            var allPassedOrCannotThrow = attackers.All(p => room.PassedPlayerIds.Contains(p.Id) || !HasLegalThrowIn(room, p));
+            var allAttackersDone = AreAllAttackersPassedOrUnable(room, defender);
 
-            if (allDefended && !hasLegalThrowIn && allPassedOrCannotThrow)
+            if (allDefended && allAttackersDone)
             {
                 room.Table.Clear();
                 room.PassedPlayerIds.Clear();
