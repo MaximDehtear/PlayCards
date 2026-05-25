@@ -20,12 +20,12 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
             TrimMemory(bot);
             var prompt = BuildPrompt(room, bot, role, legalCards);
             var limits = BuildRoundLimits(room);
-            bot.BotMemory.Add($"{DateTime.UtcNow:HH:mm:ss}: {bot.Name} asks AI as {role}. Legal cards: {string.Join(", ", legalCards.Select(c => c.Code))}. Hand: {string.Join(", ", bot.Hand.Select(c => c.Code))}. Trump: {room.TrumpSuit}. Defender cards: {limits.DefenderCardCount}. Attacks on table: {limits.AttackCardsOnTable}. Can add attacks: {limits.CanAddMoreAttackCards}.");
+            bot.BotMemory.Add($"{DateTime.UtcNow:HH:mm:ss}: {bot.Name} asks AI as {role}. Legal cards: {string.Join(", ", legalCards.Select(c => c.Code))}. Hand: {string.Join(", ", bot.Hand.Select(c => c.Code))}. Trump: {room.TrumpSuit}. Deck: {room.Deck.Count}. Defender cards: {limits.DefenderCardCount}. Attacks on table: {limits.AttackCardsOnTable}. Can add attacks: {limits.CanAddMoreAttackCards}.");
 
             var payload = JsonSerializer.Serialize(new
             {
                 contents = new[] { new { parts = new[] { new { text = prompt } } } },
-                generationConfig = new { temperature = 0.15, maxOutputTokens = 160, responseMimeType = "application/json" }
+                generationConfig = new { temperature = 0.15, maxOutputTokens = 180, responseMimeType = "application/json" }
             });
 
             using var request = new HttpRequestMessage(HttpMethod.Post, BuildEndpoint());
@@ -48,11 +48,12 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
             }
 
             using var answer = JsonDocument.Parse(modelText);
-            var code = answer.RootElement.TryGetProperty("cardCode", out var cardCode) ? cardCode.GetString() : null;
+            var code = answer.RootElement.TryGetProperty("cardCode", out var cardCode) && cardCode.ValueKind != JsonValueKind.Null ? cardCode.GetString() : null;
             var reason = answer.RootElement.TryGetProperty("reason", out var reasonProp) ? reasonProp.GetString() : null;
-            var legal = legalCards.Any(c => string.Equals(c.Code, code, StringComparison.OrdinalIgnoreCase));
+            var wantsPass = string.IsNullOrWhiteSpace(code) || string.Equals(code, "pass", StringComparison.OrdinalIgnoreCase);
+            var legal = !wantsPass && legalCards.Any(c => string.Equals(c.Code, code, StringComparison.OrdinalIgnoreCase));
 
-            bot.BotMemory.Add($"{DateTime.UtcNow:HH:mm:ss}: AI advised {code ?? "none"}. Reason: {reason ?? "not provided"}. Valid: {legal}.");
+            bot.BotMemory.Add($"{DateTime.UtcNow:HH:mm:ss}: AI advised {(wantsPass ? "pass" : code ?? "none")}. Reason: {reason ?? "not provided"}. Valid card: {legal}.");
             return legal ? code : null;
         }
         catch (Exception ex)
@@ -77,7 +78,6 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
             .GetProperty("candidates")[0]
             .GetProperty("content")
             .GetProperty("parts")[0]
-            .GetProperty("text")
             .GetString();
     }
 
@@ -86,7 +86,7 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
         var limits = BuildRoundLimits(room);
         var state = new
         {
-            task = "You are a separate Gemini chat for this specific Durak bot. Continue from this bot's private memory and choose one legal move. Return only JSON: {\"cardCode\":\"...\",\"reason\":\"short reason\"}.",
+            task = "You are a separate Gemini chat for this Durak bot. Choose one legal move. Return only JSON: {\"cardCode\":\"...\",\"reason\":\"short reason\"}. For attack/defense choose a card from legalCardCodes. For throw-in you may pass by returning {\"cardCode\":null,\"reason\":\"pass to save cards\"}.",
             botIdentity = new
             {
                 bot.Id,
@@ -96,26 +96,28 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
             botSays = new
             {
                 trumpSuit = room.TrumpSuit?.ToString(),
+                deckCardsLeft = room.Deck.Count,
                 myCards = bot.Hand.Select(c => c.Code).ToList(),
                 request = role switch
                 {
-                    "defense" => "I am defending. Which legal card should I use to beat the attack, or should I take if no legal card exists?",
-                    "attack" => "I am attacking. Which legal card should I lead with?",
-                    "throw-in" => "I can throw in. Decide whether it is smart to add pressure based on the defender card count, table, and memory. If you choose to throw in, choose one legal card.",
+                    "defense" => "I am defending. Choose the cheapest legal card that beats the attack. Save trump cards if a non-trump defense works.",
+                    "attack" => "I am leading an attack. Prefer low non-trump cards. Avoid starting with a trump while many deck cards remain unless it helps me finish soon.",
+                    "throw-in" => "It is my throw-in turn. I may throw one legal card or pass. Avoid wasting trump cards while many deck cards remain. Pass if the only useful throw-in is an expensive trump and the defender is not near losing.",
                     _ => "What is the best legal move?"
                 }
             },
             strictRules = new[]
             {
-                "Choose only from legalCardCodes.",
+                "Choose only from legalCardCodes, or choose null only when role is throw-in and passing is strategically better.",
                 "Do not invent cards.",
                 "Do not assume unknown deck cards.",
                 "You only know your own hand. Other players' hands are hidden; you only know their card counts.",
-                "Use only myCards, table, players card counts, roundLimits, and memory.",
+                "Use only myCards, table, players card counts, roundLimits, deckCardsLeft, and memory.",
                 "Memory contains visible events: cards beaten, discarded, taken, and prior advice.",
-                "When throwing in, consider defenderCardCount and maxTotalAttackCardsAgainstDefender.",
-                "Do not waste high cards or trump cards without a reason.",
-                "Prefer saving trump cards unless necessary.",
+                "When attacking early or mid-game, prefer the lowest non-trump card.",
+                "Do not lead or throw in trump cards while deckCardsLeft is high unless there is a clear tactical reason.",
+                "When throwing in, pass instead of wasting trump if deckCardsLeft is high and defender has several cards.",
+                "Pressure harder when defenderCardCount is low, deckCardsLeft is low, or this can help you finish your hand.",
                 "If several moves are similar, prefer the lowest non-trump card."
             },
             legalCardCodes = legalCards.Select(c => c.Code).ToList(),
