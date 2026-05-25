@@ -72,6 +72,9 @@ public sealed partial class GameRoomService
         return activeAttackCards < maxAttackCards;
     }
 
+    private static bool AllTableCardsDefended(Room room) =>
+        room.Table.Count > 0 && room.Table.All(p => p.Defense is not null);
+
     private static HashSet<Rank> TableRanks(Room room) => room.Table
         .Select(p => p.Attack.Rank)
         .Concat(room.Table.Where(p => p.Defense is not null).Select(p => p.Defense!.Rank))
@@ -80,6 +83,7 @@ public sealed partial class GameRoomService
     private static bool HasLegalThrowIn(Room room, Player player)
     {
         if (player.Hand.Count == 0 || room.Table.Count == 0) return false;
+        if (!AllTableCardsDefended(room)) return false;
         if (!CanAddAttackCard(room)) return false;
         var ranks = TableRanks(room);
         return player.Hand.Any(c => ranks.Contains(c.Rank));
