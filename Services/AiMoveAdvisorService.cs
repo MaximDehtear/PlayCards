@@ -78,6 +78,7 @@ public sealed class AiMoveAdvisorService(ILogger<AiMoveAdvisorService> logger)
             .GetProperty("candidates")[0]
             .GetProperty("content")
             .GetProperty("parts")[0]
+            .GetProperty("text")
             .GetString();
     }
 
