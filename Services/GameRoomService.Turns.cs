@@ -10,7 +10,7 @@ public sealed partial class GameRoomService
         {
             var room = GetPlayingRoom(roomCode);
             var player = GetActionPlayer(room, playerId);
-            if (!CanPlayerAttack(room, player)) throw new InvalidOperationException("Сейчас не твоя атака.");
+            if (!CanPlayerAttack(room, player)) throw new InvalidOperationException("Сейчас не твоя очередь подкидывать.");
             if (!CanAddAttackCard(room)) throw new InvalidOperationException("Нельзя подкинуть больше карт, чем защитник может отбить.");
 
             var card = TakeCard(player, cardCode);
@@ -21,8 +21,12 @@ public sealed partial class GameRoomService
             }
 
             room.Table.Add(new AttackPair { Attack = card });
-            room.PassedPlayerIds.Remove(player.Id);
+            room.PassedPlayerIds.Clear();
             room.Log = $"{player.Name} атакует {card.Label}.";
+
+            if (room.Table.Count > 0)
+                room.AttackerIndex = NextThrowerIndex(room, room.AttackerIndex);
+
             CheckInstantFinish(room);
             return room;
         }
@@ -89,6 +93,8 @@ public sealed partial class GameRoomService
 
             var defender = room.Players[room.DefenderIndex];
             if (player.Id == defender.Id) throw new InvalidOperationException("Защитник не пасует. Защитник должен отбиться или взять карты.");
+            if (room.AttackerIndex < 0 || room.AttackerIndex >= room.Players.Count || room.Players[room.AttackerIndex].Id != player.Id)
+                throw new InvalidOperationException("Сейчас не твоя очередь пасовать.");
 
             room.PassedPlayerIds.Add(player.Id);
 
@@ -106,7 +112,8 @@ public sealed partial class GameRoomService
             }
             else
             {
-                room.Log = $"{player.Name} пасует.";
+                room.AttackerIndex = NextThrowerIndex(room, room.AttackerIndex);
+                room.Log = $"{player.Name} пасует. Очередь подкидывать: {room.Players[room.AttackerIndex].Name}.";
             }
 
             CheckInstantFinish(room);
