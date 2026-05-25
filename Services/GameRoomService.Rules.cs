@@ -94,6 +94,25 @@ public sealed partial class GameRoomService
             .All(p => room.PassedPlayerIds.Contains(p.Id) || !HasLegalThrowIn(room, p));
     }
 
+    private static int NextThrowerIndex(Room room, int from)
+    {
+        if (room.DefenderIndex < 0 || room.DefenderIndex >= room.Players.Count) return from;
+        var defender = room.Players[room.DefenderIndex];
+
+        for (var step = 1; step <= room.Players.Count; step++)
+        {
+            var idx = (from + step) % room.Players.Count;
+            var player = room.Players[idx];
+            if (player.Id == defender.Id) continue;
+            if (!CanStillPlay(room, player)) continue;
+            if (room.PassedPlayerIds.Contains(player.Id)) continue;
+            if (!HasLegalThrowIn(room, player)) continue;
+            return idx;
+        }
+
+        return from;
+    }
+
     private void DrawUpToSix(Room room, Player player)
     {
         while (player.Hand.Count < 6 && room.Deck.Count > 0)
@@ -171,7 +190,9 @@ public sealed partial class GameRoomService
         if (room.DefenderIndex >= 0 && room.DefenderIndex < room.Players.Count && room.Players[room.DefenderIndex].Id == player.Id) return false;
         if (player.Hand.Count == 0) return false;
         if (!CanAddAttackCard(room)) return false;
-        if (room.Table.Count == 0) return room.AttackerIndex >= 0 && room.AttackerIndex < room.Players.Count && room.Players[room.AttackerIndex].Id == player.Id;
+        if (room.AttackerIndex < 0 || room.AttackerIndex >= room.Players.Count) return false;
+        if (room.Players[room.AttackerIndex].Id != player.Id) return false;
+        if (room.Table.Count == 0) return true;
         return !room.PassedPlayerIds.Contains(player.Id) && HasLegalThrowIn(room, player);
     }
 }
