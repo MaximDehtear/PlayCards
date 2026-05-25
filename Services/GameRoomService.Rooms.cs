@@ -159,4 +159,12 @@ public sealed partial class GameRoomService
             }
         }
     }
+
+    private static void ReconnectPlayer(Room room, Player player, string connectionId)
+    {
+        player.ConnectionId = connectionId;
+        player.Status = PlayerStatus.Connected;
+        player.DisconnectedAtUtc = null;
+        room.Log = $"{player.Name} вернулся в игру.";
+    }
 }
