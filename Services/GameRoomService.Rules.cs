@@ -85,14 +85,13 @@ public sealed partial class GameRoomService
         return player.Hand.Any(c => ranks.Contains(c.Rank));
     }
 
-    private void ReopenPassedAttackersWithLegalThrowIn(Room room)
+    private static bool AreAllAttackersPassedOrUnable(Room room, Player defender)
     {
-        if (room.Table.Count == 0) return;
-        var defender = room.Players[room.DefenderIndex];
-        foreach (var attacker in room.Players.Where(p => CanStillPlay(room, p) && p.Id != defender.Id && room.PassedPlayerIds.Contains(p.Id)))
-        {
-            if (HasLegalThrowIn(room, attacker)) room.PassedPlayerIds.Remove(attacker.Id);
-        }
+        if (!CanAddAttackCard(room)) return true;
+
+        return room.Players
+            .Where(p => CanStillPlay(room, p) && p.Id != defender.Id && p.Hand.Count > 0)
+            .All(p => room.PassedPlayerIds.Contains(p.Id) || !HasLegalThrowIn(room, p));
     }
 
     private void DrawUpToSix(Room room, Player player)
