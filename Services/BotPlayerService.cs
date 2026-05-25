@@ -21,7 +21,7 @@ public sealed class BotPlayerService(GameRoomService games, TurnRulesService rul
             room.BotSequence++;
             var bot = new Player
             {
-                Name = $"ИИ {room.BotSequence}",
+                Name = $"Бот {room.BotSequence}",
                 IsBot = true,
                 Status = PlayerStatus.Connected
             };
@@ -77,8 +77,9 @@ public sealed class BotPlayerService(GameRoomService games, TurnRulesService rul
                             .OrderBy(c => DefenseCost(c, room.TrumpSuit!.Value))
                             .ToList();
 
-                        var aiDefenseCode = ai.ChooseCard(room, defender, "defense", legalDefenses);
-                        var defense = legalDefenses.FirstOrDefault(c => string.Equals(c.Code, aiDefenseCode, StringComparison.OrdinalIgnoreCase))
+                        var aiDefense = ai.ChooseCard(room, defender, "defense", legalDefenses);
+                        SetBotKindName(room, defender, aiDefense.UsedAi);
+                        var defense = legalDefenses.FirstOrDefault(c => string.Equals(c.Code, aiDefense.CardCode, StringComparison.OrdinalIgnoreCase))
                             ?? legalDefenses.FirstOrDefault();
 
                         if (defense is not null) return new BotAction(room.Code, defender.Id, BotActionKind.Defend, defense.Code, undefended.Attack.Code);
@@ -93,7 +94,7 @@ public sealed class BotPlayerService(GameRoomService games, TurnRulesService rul
                 if (thrower.IsBot && thrower.Status == PlayerStatus.Connected && !room.PassedPlayerIds.Contains(thrower.Id))
                 {
                     var attack = ChooseAttack(room, thrower);
-                    if (attack is not null) return new BotAction(room.Code, thrower.Id, BotActionKind.Attack, attack.Code);
+                    if (attack.Card is not null) return new BotAction(room.Code, thrower.Id, BotActionKind.Attack, attack.Card.Code);
                     if (room.Table.Count > 0)
                     {
                         RememberTableDestination(room, thrower, "ушла в сброс после бито");
@@ -152,23 +153,25 @@ public sealed class BotPlayerService(GameRoomService games, TurnRulesService rul
         }
     }
 
-    private Card? ChooseAttack(Room room, Player bot)
+    private BotChoice ChooseAttack(Room room, Player bot)
     {
-        if (bot.Hand.Count == 0) return null;
+        if (bot.Hand.Count == 0) return new BotChoice(null, false);
         if (room.Table.Count == 0)
         {
             var legal = OrderedAttackLeadCards(room, bot).ToList();
-            var aiCode = ai.ChooseCard(room, bot, "attack", legal);
-            var aiChoice = legal.FirstOrDefault(c => string.Equals(c.Code, aiCode, StringComparison.OrdinalIgnoreCase));
-            return IsStrategicAttackChoice(room, bot, aiChoice) ? aiChoice : legal.FirstOrDefault();
+            var advice = ai.ChooseCard(room, bot, "attack", legal);
+            SetBotKindName(room, bot, advice.UsedAi);
+            var aiChoice = legal.FirstOrDefault(c => string.Equals(c.Code, advice.CardCode, StringComparison.OrdinalIgnoreCase));
+            var card = IsStrategicAttackChoice(room, bot, aiChoice) ? aiChoice : legal.FirstOrDefault();
+            return new BotChoice(card, advice.UsedAi && card is not null && string.Equals(card.Code, advice.CardCode, StringComparison.OrdinalIgnoreCase));
         }
 
         return ChooseThrowIn(room, bot);
     }
 
-    private Card? ChooseThrowIn(Room room, Player bot)
+    private BotChoice ChooseThrowIn(Room room, Player bot)
     {
-        if (bot.Hand.Count == 0 || !TurnRulesService.CanAddAttackCard(room)) return null;
+        if (bot.Hand.Count == 0 || !TurnRulesService.CanAddAttackCard(room)) return new BotChoice(null, false);
         var ranks = room.Table.Select(p => p.Attack.Rank)
             .Concat(room.Table.Where(p => p.Defense is not null).Select(p => p.Defense!.Rank))
             .ToHashSet();
@@ -179,11 +182,17 @@ public sealed class BotPlayerService(GameRoomService games, TurnRulesService rul
             .ThenBy(c => c.Rank)
             .ToList();
 
-        if (ShouldPassInsteadOfThrowing(room, bot, legal)) return null;
+        if (ShouldPassInsteadOfThrowing(room, bot, legal))
+        {
+            SetBotKindName(room, bot, false);
+            return new BotChoice(null, false);
+        }
 
-        var aiCode = ai.ChooseCard(room, bot, "throw-in", legal);
-        var aiChoice = legal.FirstOrDefault(c => string.Equals(c.Code, aiCode, StringComparison.OrdinalIgnoreCase));
-        return IsStrategicThrowInChoice(room, bot, aiChoice, legal) ? aiChoice : legal.FirstOrDefault();
+        var advice = ai.ChooseCard(room, bot, "throw-in", legal);
+        SetBotKindName(room, bot, advice.UsedAi);
+        var aiChoice = legal.FirstOrDefault(c => string.Equals(c.Code, advice.CardCode, StringComparison.OrdinalIgnoreCase));
+        var card = IsStrategicThrowInChoice(room, bot, aiChoice, legal) ? aiChoice : legal.FirstOrDefault();
+        return new BotChoice(card, advice.UsedAi && card is not null && string.Equals(card.Code, advice.CardCode, StringComparison.OrdinalIgnoreCase));
     }
 
     private static IEnumerable<Card> OrderedAttackLeadCards(Room room, Player bot)
@@ -257,6 +266,14 @@ public sealed class BotPlayerService(GameRoomService games, TurnRulesService rul
         return room.Deck.Count <= 6 || bot.Hand.Count <= 2;
     }
 
+    private static void SetBotKindName(Room room, Player bot, bool usedAi)
+    {
+        if (!bot.IsBot) return;
+        var index = Math.Max(1, room.Players.Where(p => p.IsBot).ToList().FindIndex(p => p.Id == bot.Id) + 1);
+        var expectedPrefix = usedAi ? "ИИ" : "Бот";
+        bot.Name = $"{expectedPrefix} {index}";
+    }
+
     private static bool CanBeat(Card attack, Card defense, Suit trump) =>
         defense.Suit == attack.Suit && defense.Rank > attack.Rank || defense.Suit == trump && attack.Suit != trump;
 
@@ -294,6 +311,7 @@ public sealed class BotPlayerService(GameRoomService games, TurnRulesService rul
     private object Sync => _syncField.GetValue(games)!;
     private Room GetRoom(string code) => Rooms.TryGetValue(code, out var room) ? room : throw new InvalidOperationException("Комната не найдена.");
 
+    private readonly record struct BotChoice(Card? Card, bool UsedAi);
     private readonly record struct BotAction(string RoomCode, string PlayerId, BotActionKind Kind, string? CardCode = null, string? TargetAttackCode = null);
     private enum BotActionKind { Attack, Defend, Take, Pass }
 }
