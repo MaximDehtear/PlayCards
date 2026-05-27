@@ -39,11 +39,20 @@
 
     protected override void OnParametersSet()
     {
-        if (Result == EndGameResult.None) return;
-        if (string.IsNullOrWhiteSpace(TriggerKey)) return;
-        if (string.Equals(_lastTriggerKey, TriggerKey, StringComparison.Ordinal)) return;
+        if (Result == EndGameResult.None)
+        {
+            _lastTriggerKey = null;
+            _visible = false;
+            return;
+        }
 
-        _lastTriggerKey = TriggerKey;
+        var effectiveTriggerKey = string.IsNullOrWhiteSpace(TriggerKey)
+            ? $"result:{Result}"
+            : TriggerKey;
+
+        if (string.Equals(_lastTriggerKey, effectiveTriggerKey, StringComparison.Ordinal)) return;
+
+        _lastTriggerKey = effectiveTriggerKey;
         _visible = true;
         _bursts.Clear();
         _laughs.Clear();
