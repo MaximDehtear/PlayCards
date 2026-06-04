@@ -1,6 +1,6 @@
 # PlayCards — Durak Online
 
-Онлайн-игра в **Дурака** на **Blazor Server + C# + SignalR**.
+[Онлайн-игра в **Дурака** на **Blazor Server + C# + SignalR**.](https://playcards-durak.onrender.com/)
 
 ## Что реализовано
 
